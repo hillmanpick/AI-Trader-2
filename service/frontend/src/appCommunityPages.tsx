@@ -1,3 +1,4 @@
+import { communityFetch as fetch, OFFICIAL_MODE, beijingTime } from './officialData'
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 
 import { Link, useLocation, useNavigate } from 'react-router-dom'
@@ -121,7 +122,7 @@ function SignalCard({
   canAcceptReplies?: boolean
   autoOpenReplies?: boolean
 }) {
-  const [token] = useState<string | null>(localStorage.getItem('claw_token'))
+  const [token] = useState<string | null>(OFFICIAL_MODE ? null : localStorage.getItem('claw_token'))
   const [showReplies, setShowReplies] = useState(false)
   const [replies, setReplies] = useState<any[]>([])
   const [replyContent, setReplyContent] = useState('')
@@ -133,7 +134,7 @@ function SignalCard({
   const loadReplies = async () => {
     setLoadingReplies(true)
     try {
-      const res = await fetch(`${API_BASE}/signals/${signal.id}/replies`)
+      const res = await fetch(`${API_BASE}/signals/${signal.signal_id ?? signal.id}/replies`)
       const data = await res.json()
       setReplies(data.replies || [])
     } catch (e) {
@@ -283,7 +284,7 @@ function SignalCard({
         <span>{language === 'zh' ? `参与 ${signal.participant_count || 1}` : `${signal.participant_count || 1} participants`}</span>
         <span>
           {language === 'zh' ? '最近活跃 ' : 'Active '}
-          {signal.last_reply_at ? new Date(signal.last_reply_at).toLocaleString() : new Date(signal.created_at).toLocaleString()}
+          {signal.last_reply_at ? beijingTime(signal.last_reply_at) : beijingTime(signal.created_at)}
         </span>
       </div>
 
@@ -309,7 +310,7 @@ function SignalCard({
           className="btn btn-ghost"
           style={{ fontSize: '13px', padding: '8px 0' }}
         >
-          {showReplies ? '▼' : '▶'} {language === 'zh' ? '收起回复' : 'Hide replies'}
+          {showReplies ? '▼' : '▶'} {language === 'zh' ? (showReplies ? '收起回复' : '查看回复') : (showReplies ? 'Hide replies' : 'View replies')}
         </button>
 
         {showReplies && (
@@ -330,7 +331,7 @@ function SignalCard({
               </form>
             ) : (
               <p style={{ fontSize: '13px', color: 'var(--text-muted)', marginBottom: '12px' }}>
-                {language === 'zh' ? '登录后可回复' : 'Login to reply'}
+                {language === 'zh' ? (OFFICIAL_MODE ? '请到官方站点回复' : '登录后可回复') : 'Login to reply'}
               </p>
             )}
 
@@ -350,7 +351,7 @@ function SignalCard({
                         <AgentName
                           name={reply.agent_name || reply.user_name || 'Anonymous'}
                           verified={isVerifiedAgent(reply, 'agent')}
-                        /> • {new Date(reply.created_at).toLocaleString()}
+                        /> • {beijingTime(reply.created_at)}
                       </span>
                       <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                         {reply.accepted ? (
@@ -381,7 +382,7 @@ function SignalCard({
 }
 
 export function StrategiesPage() {
-  const [token] = useState<string | null>(localStorage.getItem('claw_token'))
+  const [token] = useState<string | null>(OFFICIAL_MODE ? null : localStorage.getItem('claw_token'))
   const [strategies, setStrategies] = useState<any[]>([])
   const [strategyPage, setStrategyPage] = useState(1)
   const [strategyTotal, setStrategyTotal] = useState(0)
@@ -544,6 +545,8 @@ export function StrategiesPage() {
           <button
             key={value}
             className="btn btn-ghost"
+            disabled={OFFICIAL_MODE && value === 'following'}
+            title={OFFICIAL_MODE && value === 'following' ? '关注列表属于官方私有账户，请到官方站点查看' : undefined}
             onClick={() => {
               setSort(value)
               setStrategyPage(1)
@@ -750,7 +753,7 @@ export function StrategiesPage() {
 }
 
 export function DiscussionsPage() {
-  const [token] = useState<string | null>(localStorage.getItem('claw_token'))
+  const [token] = useState<string | null>(OFFICIAL_MODE ? null : localStorage.getItem('claw_token'))
   const [discussions, setDiscussions] = useState<any[]>([])
   const [discussionPage, setDiscussionPage] = useState(1)
   const [discussionTotal, setDiscussionTotal] = useState(0)
@@ -938,6 +941,8 @@ export function DiscussionsPage() {
           <button
             key={value}
             className="btn btn-ghost"
+            disabled={OFFICIAL_MODE && value === 'following'}
+            title={OFFICIAL_MODE && value === 'following' ? '关注列表属于官方私有账户，请到官方站点查看' : undefined}
             onClick={() => {
               setSort(value)
               setDiscussionPage(1)

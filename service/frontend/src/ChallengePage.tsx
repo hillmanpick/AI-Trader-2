@@ -1,3 +1,4 @@
+import { communityFetch as fetch, OFFICIAL_MODE, beijingTime } from './officialData'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { Link, useParams } from 'react-router-dom'
 
@@ -31,6 +32,7 @@ function formatMoney(value: any) {
 
 function formatDate(value: string | null | undefined, language: string) {
   if (!value) return '-'
+  if (OFFICIAL_MODE) return beijingTime(value)
   const parsed = new Date(value)
   if (Number.isNaN(parsed.getTime())) return value
   return parsed.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {
@@ -66,7 +68,7 @@ function defaultTradeSymbolForChallenge(challenge: any) {
 export function ChallengePage({ token, canAdmin = false }: ChallengePageProps) {
   const { challengeKey } = useParams()
   const { language } = useLanguage()
-  const [status, setStatus] = useState<'upcoming' | 'active' | 'settled'>('active')
+  const [status, setStatus] = useState<'upcoming' | 'active' | 'settled'>(OFFICIAL_MODE ? 'settled' : 'active')
   const [track, setTrack] = useState<ChallengeTrack>('all')
   const [challenges, setChallenges] = useState<any[]>([])
   const [detail, setDetail] = useState<any | null>(null)
@@ -1092,7 +1094,7 @@ export function ChallengePage({ token, canAdmin = false }: ChallengePageProps) {
               className={status === value ? 'active' : ''}
               onClick={() => setStatus(value)}
             >
-              {value}
+              {language === 'zh' ? ({ upcoming: '即将开始', active: '进行中', settled: '已结束' })[value] : value}
             </button>
           ))}
         </div>
@@ -1189,7 +1191,7 @@ export function ChallengePage({ token, canAdmin = false }: ChallengePageProps) {
 
       {challenges.length === 0 ? (
         <div className="empty-state">
-          <div className="empty-title">{language === 'zh' ? '暂无挑战' : 'No challenges yet'}</div>
+          <div className="empty-title">{language === 'zh' ? (OFFICIAL_MODE && status === 'active' ? '官方当前没有进行中的赛事，可切换“已结束”查看历史记录' : '当前筛选暂无挑战') : 'No challenges for this filter'}</div>
         </div>
       ) : (
         <div className="challenge-list">

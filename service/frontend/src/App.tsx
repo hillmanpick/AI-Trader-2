@@ -1,3 +1,5 @@
+import { OFFICIAL_MODE } from './officialData'
+import { ConnectedPositionsPage, OfficialAccountSection, OfficialSourceBanner } from './OfficialSections'
 import { useEffect, useState } from 'react'
 import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 
@@ -30,6 +32,9 @@ import { ChallengePage } from './ChallengePage'
 import { ExperimentAdminPage } from './ExperimentAdminPage'
 import { ResearchExportsPage } from './ResearchExportsPage'
 import { TeamMissionsPage } from './TeamMissionsPage'
+import { QuantPage } from './QuantPage'
+import { OfficialCommunityPage } from './OfficialCommunityPage'
+import './OfficialCommunity.css'
 import { Language, getT } from './i18n'
 import { hasPermission } from './appShared'
 
@@ -274,30 +279,33 @@ function AppRouter({
             <TopbarControls />
           </div>
 
+          {OFFICIAL_MODE && !['/quant', '/positions', '/community', '/login', '/register'].includes(location.pathname) && <OfficialSourceBanner />}
           <Routes>
-            <Route path="/market" element={<SignalsFeed token={token} />} />
-            <Route path="/leaderboard" element={<LeaderboardPage token={token} />} />
-            <Route path="/challenges" element={<ChallengePage token={token} canAdmin={canAdmin} />} />
-            <Route path="/challenges/:challengeKey" element={<ChallengePage token={token} canAdmin={canAdmin} />} />
+            <Route path="/quant" element={<QuantPage />} />
+            <Route path="/community" element={<OfficialCommunityPage />} />
+            <Route path="/market" element={<SignalsFeed token={OFFICIAL_MODE ? null : token} />} />
+            <Route path="/leaderboard" element={<LeaderboardPage token={OFFICIAL_MODE ? null : token} />} />
+            <Route path="/challenges" element={<ChallengePage token={OFFICIAL_MODE ? null : token} canAdmin={!OFFICIAL_MODE && canAdmin} />} />
+            <Route path="/challenges/:challengeKey" element={<ChallengePage token={OFFICIAL_MODE ? null : token} canAdmin={!OFFICIAL_MODE && canAdmin} />} />
             <Route path="/team-missions" element={permissionLoading ? permissionLoadingView : canUseTeamMissionAdmin ? <TeamMissionsPage token={token} canAdmin={canUseTeamMissionAdmin} /> : <Navigate to="/market" replace />} />
             <Route path="/team-missions/:missionKey" element={permissionLoading ? permissionLoadingView : canUseTeamMissionAdmin ? <TeamMissionsPage token={token} canAdmin={canUseTeamMissionAdmin} /> : <Navigate to="/market" replace />} />
             <Route path="/teams/:teamKey" element={permissionLoading ? permissionLoadingView : canUseTeamMissionAdmin ? <TeamMissionsPage token={token} canAdmin={canUseTeamMissionAdmin} /> : <Navigate to="/market" replace />} />
             <Route path="/experiments" element={permissionLoading ? permissionLoadingView : canUseExperiments ? <ExperimentAdminPage token={token} /> : <Navigate to="/market" replace />} />
             <Route path="/research-exports" element={permissionLoading ? permissionLoadingView : canUseResearchExports && token ? <ResearchExportsPage token={token} /> : <Navigate to="/market" replace />} />
             <Route path="/financial-events" element={<FinancialEventsPage />} />
-            <Route path="/copytrading" element={token ? <CopyTradingPage token={token} /> : <Navigate to="/login" replace />} />
+            <Route path="/copytrading" element={OFFICIAL_MODE ? <OfficialAccountSection kind="copytrading" /> : token ? <CopyTradingPage token={token} /> : <Navigate to="/login" replace />} />
             <Route path="/strategies" element={<StrategiesPage />} />
             <Route path="/discussions" element={<DiscussionsPage />} />
-            <Route path="/positions" element={<PositionsPage />} />
-            <Route path="/trade" element={token ? <TradePage token={token} agentInfo={agentInfo} onTradeSuccess={fetchAgentInfo} /> : <Navigate to="/login" replace />} />
-            <Route path="/exchange" element={token ? <ExchangePage token={token} onExchangeSuccess={fetchAgentInfo} /> : <Navigate to="/login" replace />} />
+            <Route path="/positions" element={OFFICIAL_MODE ? <ConnectedPositionsPage /> : <PositionsPage />} />
+            <Route path="/trade" element={OFFICIAL_MODE ? <OfficialAccountSection kind="trade" /> : token ? <TradePage token={token} agentInfo={agentInfo} onTradeSuccess={fetchAgentInfo} /> : <Navigate to="/login" replace />} />
+            <Route path="/exchange" element={OFFICIAL_MODE ? <OfficialAccountSection kind="exchange" /> : token ? <ExchangePage token={token} onExchangeSuccess={fetchAgentInfo} /> : <Navigate to="/login" replace />} />
             <Route path="/login" element={<LoginPage onLogin={login} />} />
             <Route path="/register" element={<RegisterPage onLogin={login} />} />
             <Route path="*" element={<Navigate to="/market" replace />} />
           </Routes>
         </div>
 
-        <TrendingSidebar />
+        {location.pathname !== '/community' && <TrendingSidebar />}
       </main>
     </div>
   )

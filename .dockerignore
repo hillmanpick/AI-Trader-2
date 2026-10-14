@@ -1,0 +1,14 @@
+.git
+.env*
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/*.db
+**/logs
+deploy/data
+deploy/postgres-data
+deploy/tls
+deploy/.env
+deploy/access.txt
+deploy/htpasswd
+research-local

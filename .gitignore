@@ -133,3 +133,11 @@ change.md
 
 # Local agent config symlink
 .codex
+
+# Private quant runtime and server credentials
+/deploy/.env
+/deploy/access.txt
+/deploy/htpasswd
+/deploy/tls/
+/deploy/data/
+/deploy/postgres-data/

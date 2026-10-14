@@ -1,3 +1,4 @@
+import { communityFetch as fetch, OFFICIAL_MODE, beijingTime } from './officialData'
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
@@ -1301,6 +1302,7 @@ export function SignalsFeed({ token }: { token?: string | null }) {
   // Format time display
   const formatTime = (timeStr: string | undefined | null) => {
     if (!timeStr) return null
+    if (OFFICIAL_MODE) return beijingTime(timeStr)
     try {
       const date = new Date(timeStr)
       return date.toLocaleString('zh-CN', {
@@ -1330,7 +1332,7 @@ export function SignalsFeed({ token }: { token?: string | null }) {
           </div>
           <div style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: 1.6 }}>
             {language === 'zh'
-              ? '你现在可以查看市场信号、持仓和交易员资料。登录后可下单、跟单并参与互动。'
+              ? '你现在查看的是官方公开信号、模拟持仓和交易员资料。互动请前往官方站点，币安量化请进入量化控制台。'
               : 'You can now browse market signals, positions, and trader profiles. Login to trade, copy traders, and interact.'}
           </div>
         </div>
@@ -1435,7 +1437,7 @@ export function SignalsFeed({ token }: { token?: string | null }) {
                               <td>${pos.entry_price?.toLocaleString()}</td>
                               <td>${pos.current_price?.toLocaleString() || '-'}</td>
                               <td style={{ color: (pos.pnl || 0) >= 0 ? 'var(--success)' : 'var(--error)' }}>
-                                {pos.pnl >= 0 ? '+' : ''}{pos.pnl?.toFixed(2) || '0.00'}
+                                {pos.pnl == null ? '未提供' : `${pos.pnl >= 0 ? '+' : ''}${pos.pnl.toFixed(2)}`}
                               </td>
                               <td>
                                 <span className="tag" style={{ background: 'var(--bg-tertiary)' }}>
@@ -1549,14 +1551,14 @@ export function SignalsFeed({ token }: { token?: string | null }) {
                   <div className="agent-stat">
                     <span className="stat-label">{language === 'zh' ? '持仓盈亏(浮动)' : 'Position PnL (Unrealized)'}</span>
                     <span className={`stat-value ${(agent.position_pnl || 0) >= 0 ? 'positive' : 'negative'}`}>
-                      {(agent.position_pnl || 0) >= 0 ? '+' : ''}{agent.position_pnl?.toFixed(2) || '0.00'}
+                      {OFFICIAL_MODE && (agent.positions || []).some((p: any) => p.pnl == null) ? '报价不完整' : `${(agent.position_pnl || 0) >= 0 ? '+' : ''}${agent.position_pnl?.toFixed(2) || '0.00'}`}
                     </span>
                   </div>
                 </div>
                 <div className="agent-meta">
                   <span className="agent-last-signal">
                     {language === 'zh' ? '持仓: ' : 'Positions: '}
-                    {(agent.positions || []).map((p: any) => getInstrumentLabel(p)).join(', ') || '-'}
+                    {(agent.positions || []).slice(0, 6).map((p: any) => getInstrumentLabel(p)).join(', ') || '-'}{(agent.positions || []).length > 6 ? ` …共 ${agent.positions.length} 项` : ''}
                   </span>
                 </div>
               </div>
@@ -2098,7 +2100,7 @@ export function LeaderboardPage({ token }: { token?: string | null }) {
           </div>
           <div style={{ color: 'var(--text-secondary)', fontSize: '14px', lineHeight: 1.6 }}>
             {language === 'zh'
-              ? '当前可直接查看收益曲线和 Top 交易员表现。登录后可进一步交易、跟单与管理账户。'
+              ? '当前展示官方社区模拟收益曲线和交易员表现。社区收益不代表你的币安账户收益。'
               : 'You can view profit curves and top trader performance without logging in. Login to trade, copy traders, and manage your account.'}
           </div>
         </div>
@@ -2137,6 +2139,7 @@ export function LeaderboardPage({ token }: { token?: string | null }) {
       {/* Profit Chart */}
       {chartData.length > 0 && (
         <div className="card" style={{ marginBottom: '20px', padding: '16px' }}>
+          {OFFICIAL_MODE && topChartAgents.every((agent: any) => (agent.history || []).length <= 1) && <p className="official-muted">官方当前仅提供最新收益快照，图中显示单个数据点；没有足够历史记录生成连续收益曲线。</p>}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '12px' }}>
             <h3 style={{ fontSize: '16px', margin: 0 }}>
               {chartMetric === 'drawdown'
@@ -2176,7 +2179,7 @@ export function LeaderboardPage({ token }: { token?: string | null }) {
                   fontSize: '12px'
                 }}
               >
-                {language === 'zh' ? '全部数据' : 'All Data'}
+                {language === 'zh' ? '最近 7 天' : 'Last 7 Days'}
               </button>
               <button
                 onClick={() => {
@@ -2222,7 +2225,7 @@ export function LeaderboardPage({ token }: { token?: string | null }) {
                       dataKey={agent.name}
                       stroke={LEADERBOARD_LINE_COLORS[idx % LEADERBOARD_LINE_COLORS.length]}
                       strokeWidth={2}
-                      dot={false}
+                      dot={OFFICIAL_MODE && (agent.history || []).length <= 1 ? { r: 4 } : false}
                     />
                   ))}
                 </LineChart>
@@ -2497,7 +2500,7 @@ export function PositionsPage() {
                     <td>
                       <div>{language === 'zh' ? '买入价格' : 'Entry Price'}: ${pos.entry_price?.toLocaleString()}</div>
                       <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                        {language === 'zh' ? '买入时间' : 'Entry Time'}: {pos.opened_at ? new Date(pos.opened_at).toLocaleString() : '-'}
+                        {language === 'zh' ? '买入时间' : 'Entry Time'}: {pos.opened_at ? beijingTime(pos.opened_at) : '-'}
                       </div>
                     </td>
                     <td>
@@ -2988,7 +2991,7 @@ export function TrendingSidebar() {
       <div className="card" style={{ padding: '16px', marginBottom: '16px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            {language === 'zh' ? '在线交易员' : 'Online Traders'}
+            {language === 'zh' ? (OFFICIAL_MODE ? '官方注册交易员' : '在线交易员') : (OFFICIAL_MODE ? 'Official Registered Traders' : 'Online Traders')}
           </span>
           <span style={{ fontSize: '20px', fontWeight: 700, color: 'var(--accent-primary)' }}>
             {agentCount}

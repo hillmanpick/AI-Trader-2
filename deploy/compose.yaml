@@ -1,0 +1,106 @@
+name: ai-trader-quant
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ai_trader
+      POSTGRES_USER: ai_trader
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - ./postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U ai_trader -d ai_trader"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+  api:
+    image: ai-trader-quant:local
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://ai_trader:${POSTGRES_PASSWORD}@postgres:5432/ai_trader
+      AI_TRADER_API_BACKGROUND_TASKS: "false"
+      API_STDERR_LOG: "true"
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [CMD, python, -c, "import os,urllib.request; urllib.request.urlopen(urllib.request.Request('http://localhost:8000/api/quant/status',headers={'X-Quant-Token':os.environ['QUANT_API_TOKEN']}))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    mem_limit: 400m
+  quant:
+    image: ai-trader-quant:local
+    pull_policy: never
+    env_file: .env
+    command: [python, -m, quant.worker]
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    depends_on:
+      api:
+        condition: service_started
+    mem_limit: 180m
+  paper-worker:
+    image: ai-trader-quant:local
+    pull_policy: never
+    env_file: .env
+    environment:
+      BINANCE_API_KEY: ""
+      BINANCE_API_SECRET: ""
+      AI4TRADE_TOKEN: ""
+      QUANT_MODE: paper
+      QUANT_ENABLED: "false"
+      QUANT_LIVE_ENABLED: "false"
+      QUANT_OBSERVATION_ONLY: "true"
+    command: [python, -m, quant.paper_worker]
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    mem_limit: 180m
+  platform-worker:
+    image: ai-trader-quant:local
+    pull_policy: never
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://ai_trader:${POSTGRES_PASSWORD}@postgres:5432/ai_trader
+      AI_TRADER_BACKGROUND_TASKS: prices,profit_history
+    command: [python, worker.py]
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 220m
+  community-worker:
+    image: ai-trader-quant:local
+    pull_policy: never
+    env_file: .env
+    command: [python, -m, quant.community]
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    mem_limit: 96m
+  web:
+    image: nginx:1.27-alpine
+    env_file: .env
+    restart: unless-stopped
+    ports:
+      - "${WEB_HTTPS_PORT:-8443}:443"
+    volumes:
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      - ./tls:/etc/nginx/tls:ro
+      - ./htpasswd:/etc/nginx/htpasswd:ro
+      - ../service/frontend/dist:/usr/share/nginx/html:ro
+    depends_on:
+      api:
+        condition: service_started
+    mem_limit: 64m

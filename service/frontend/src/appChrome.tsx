@@ -1,3 +1,4 @@
+import { OFFICIAL_MODE } from './officialData'
 import { useEffect, useState } from 'react'
 
 import { Link, useLocation } from 'react-router-dom'
@@ -91,6 +92,8 @@ export function Sidebar({
   const agentToken = agentInfo?.token
 
   const navItems = [
+    { path: '/quant', icon: '⚙️', label: language === 'zh' ? '币安合约量化' : 'Binance Futures', requiresAuth: false },
+    { path: '/community', icon: '🌐', label: language === 'zh' ? '官方社区' : 'Official Community', requiresAuth: false },
     { path: '/financial-events', icon: '🗞️', label: language === 'zh' ? '金融事件看板' : 'Financial Events', requiresAuth: false },
     { path: '/market', icon: '📊', label: t.nav.signals, requiresAuth: false },
     { path: '/leaderboard', icon: '🏆', label: language === 'zh' ? '排行榜' : 'Leaderboard', requiresAuth: false },
@@ -98,12 +101,12 @@ export function Sidebar({
     ...(canUseTeamMissionAdmin ? [{ path: '/team-missions', icon: '▦', label: language === 'zh' ? '团队任务' : 'Team Missions', requiresAuth: true }] : []),
     ...(canUseExperiments ? [{ path: '/experiments', icon: '◇', label: language === 'zh' ? '实验' : 'Experiments', requiresAuth: true, badge: notificationCounts.experiment, category: 'experiment' as const }] : []),
     ...(canUseResearchExports ? [{ path: '/research-exports', icon: '⇩', label: language === 'zh' ? '研究导出' : 'Research Exports', requiresAuth: true }] : []),
-    { path: '/copytrading', icon: '📋', label: language === 'zh' ? '跟单' : 'Copy Trading', requiresAuth: true },
+    { path: '/copytrading', icon: '📋', label: language === 'zh' ? '跟单' : 'Copy Trading', requiresAuth: !OFFICIAL_MODE },
     { path: '/strategies', icon: '📈', label: t.nav.strategies, requiresAuth: false, badge: notificationCounts.strategy, category: 'strategy' as const },
     { path: '/discussions', icon: '💬', label: t.nav.discussions, requiresAuth: false, badge: notificationCounts.discussion, category: 'discussion' as const },
     { path: '/positions', icon: '💼', label: t.nav.positions, requiresAuth: false },
-    { path: '/trade', icon: '💰', label: t.nav.trade, requiresAuth: true },
-    { path: '/exchange', icon: '🎁', label: t.nav.exchange, requiresAuth: true },
+    { path: '/trade', icon: '💰', label: t.nav.trade, requiresAuth: !OFFICIAL_MODE },
+    { path: '/exchange', icon: '🎁', label: t.nav.exchange, requiresAuth: !OFFICIAL_MODE },
   ]
 
   useEffect(() => {
@@ -236,16 +239,16 @@ export function Sidebar({
           <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div>
               <div style={{ fontWeight: 600, marginBottom: '6px' }}>
-                {language === 'zh' ? '游客模式' : 'Guest Mode'}
+                {language === 'zh' ? (OFFICIAL_MODE ? '官方数据浏览' : '游客模式') : 'Guest Mode'}
               </div>
               <div style={{ fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 {language === 'zh'
-                  ? '现在可以直接查看交易市场、排行榜、策略和讨论。登录后可交易、跟单和兑换积分。'
+                  ? '公开资料已同步。官方互动请到官方站点，币安交易请使用量化控制台。'
                   : 'You can browse markets, leaderboard, strategies, and discussions now. Login to trade, copy, and exchange points.'}
               </div>
             </div>
-            <Link to="/login" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
-              {language === 'zh' ? '登录 / 注册' : 'Login / Register'}
+            <Link to={OFFICIAL_MODE ? "/quant" : "/login"} className="btn btn-primary" style={{ width: '100%', justifyContent: 'center' }}>
+              {language === 'zh' ? (OFFICIAL_MODE ? '币安量化控制台' : '登录 / 注册') : 'Login / Register'}
             </Link>
             <Link to="/market" className="btn btn-ghost" style={{ width: '100%', justifyContent: 'center' }}>
               {language === 'zh' ? '先看看市场' : 'Browse Market'}

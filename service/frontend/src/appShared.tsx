@@ -1,3 +1,4 @@
+import { OFFICIAL_MODE, beijingTime } from './officialData'
 import { createContext, useContext } from 'react'
 
 import { Language, getT } from './i18n'
@@ -114,6 +115,7 @@ function parseRecordedAt(recordedAt: string) {
 
 export function formatIntelTimestamp(timestamp: string | null | undefined, language: Language) {
   if (!timestamp) return language === 'zh' ? '暂无快照' : 'No snapshot yet'
+  if (OFFICIAL_MODE) return `${beijingTime(timestamp)} UTC+8`
   const parsed = parseRecordedAt(timestamp)
   if (!parsed) return language === 'zh' ? '时间未知' : 'Unknown time'
   const formatted = parsed.toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US', {
@@ -182,6 +184,8 @@ export function buildLeaderboardChartData(
     for (let timestamp = startTimestamp; timestamp <= endTimestamp; timestamp += FIVE_MINUTES_MS) {
       bucketEnds.push(timestamp)
     }
+    // Include the latest partial bucket so a fresh upstream snapshot is visible.
+    if (now.getTime() > endTimestamp) bucketEnds.push(now.getTime())
   } else {
     const startDay = new Date(earliestTimestamp)
     startDay.setHours(0, 0, 0, 0)

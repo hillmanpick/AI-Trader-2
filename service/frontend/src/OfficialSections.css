@@ -1,0 +1,12 @@
+.official-source { padding: 18px 20px; margin-bottom: 22px; border: 1px solid var(--border-color); border-left: 3px solid var(--accent-primary); background: var(--bg-secondary); border-radius: 12px; line-height: 1.7; }
+.official-source > div { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.official-source p { margin: 8px 0; font-size: 13px; color: var(--text-secondary); }
+.official-source small, .official-muted { color: var(--text-muted); }
+.official-source a { color: var(--accent-primary); }
+.official-pill { font-size: 11px; padding: 2px 9px; border-radius: 12px; background: var(--bg-tertiary); color: var(--text-secondary); }
+.official-warning, .official-source .official-warning { color: #d99c50; }
+.official-position-summary { padding: 22px; margin: 18px 0; line-height: 1.8; }
+.official-links { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 16px; }
+.official-market { display: block; color: var(--text-muted); }
+.official-position-pagination { display: flex; justify-content: space-between; align-items: center; padding: 16px; gap: 12px; }
+.official-agent-row { display: flex; justify-content: space-between; gap: 16px; padding: 18px; margin: 10px 0; color: var(--text-primary); text-decoration: none; }

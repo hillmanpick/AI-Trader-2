@@ -1,0 +1,104 @@
+import os
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Settings:
+    mode: str = field(default_factory=lambda: os.getenv('QUANT_MODE', 'paper'))
+    enabled: bool = field(default_factory=lambda: os.getenv('QUANT_ENABLED', 'true').lower() == 'true')
+    live_enabled: bool = field(default_factory=lambda: os.getenv('QUANT_LIVE_ENABLED', 'false').lower() == 'true')
+    observation_only: bool = field(default_factory=lambda: os.getenv('QUANT_OBSERVATION_ONLY', 'false').lower() == 'true')
+    api_key: str = field(default_factory=lambda: os.getenv('BINANCE_API_KEY', ''))
+    api_secret: str = field(default_factory=lambda: os.getenv('BINANCE_API_SECRET', ''))
+    operator_token: str = field(default_factory=lambda: os.getenv('QUANT_API_TOKEN', ''))
+    db_path: str = field(default_factory=lambda: os.getenv('QUANT_DB_PATH', 'service/server/data/quant.db'))
+    symbols: tuple = field(default_factory=lambda: tuple(s.strip().upper() for s in os.getenv('QUANT_SYMBOLS', 'BTCUSDT,ETHUSDT').split(',') if s.strip()))
+    strategy: str = field(default_factory=lambda: os.getenv('QUANT_STRATEGY', 'sma_cross'))
+    interval: str = field(default_factory=lambda: os.getenv('QUANT_INTERVAL', '15m'))
+    fast: int = field(default_factory=lambda: int(os.getenv('QUANT_SMA_FAST', '10')))
+    slow: int = field(default_factory=lambda: int(os.getenv('QUANT_SMA_SLOW', '30')))
+    boll_period: int = field(default_factory=lambda: int(os.getenv('QUANT_BOLL_PERIOD', '13')))
+    boll_deviation: float = field(default_factory=lambda: float(os.getenv('QUANT_BOLL_DEVIATION', '2')))
+    allow_short: bool = field(default_factory=lambda: os.getenv('QUANT_ALLOW_SHORT', 'true').lower() == 'true')
+    leverage: int = field(default_factory=lambda: int(os.getenv('QUANT_LEVERAGE', '1')))
+    order_notional: float = field(default_factory=lambda: float(os.getenv('QUANT_ORDER_NOTIONAL_USDT', '50')))
+    max_notional: float = field(default_factory=lambda: float(os.getenv('QUANT_MAX_TOTAL_NOTIONAL_USDT', '100')))
+    max_positions: int = field(default_factory=lambda: int(os.getenv('QUANT_MAX_POSITIONS', '2')))
+    stop_pct: float = field(default_factory=lambda: float(os.getenv('QUANT_STOP_LOSS_PCT', '0.02')))
+    take_pct: float = field(default_factory=lambda: float(os.getenv('QUANT_TAKE_PROFIT_PCT', '0.04')))
+    daily_loss: float = field(default_factory=lambda: float(os.getenv('QUANT_MAX_DAILY_LOSS_USDT', '20')))
+    paper_cash: float = field(default_factory=lambda: float(os.getenv('QUANT_PAPER_BALANCE_USDT', '10000')))
+    fee_rate: float = field(default_factory=lambda: float(os.getenv('QUANT_PAPER_FEE_RATE', '0.0005')))
+    poll_seconds: int = field(default_factory=lambda: int(os.getenv('QUANT_POLL_SECONDS', '10')))
+    community_enabled: bool = field(default_factory=lambda: os.getenv('AI4TRADE_ENABLED', 'false').lower() == 'true')
+    community_token: str = field(default_factory=lambda: os.getenv('AI4TRADE_TOKEN', ''))
+    community_agent_id: str = field(default_factory=lambda: os.getenv('AI4TRADE_AGENT_ID', ''))
+    community_poll_seconds: int = field(default_factory=lambda: int(os.getenv('AI4TRADE_POLL_SECONDS', '60')))
+    ai_enabled: bool = field(default_factory=lambda: os.getenv('QUANT_AI_ENABLED', 'false').lower() == 'true')
+    deepseek_api_key: str = field(default_factory=lambda: os.getenv('DEEPSEEK_API_KEY', ''))
+    deepseek_base_url: str = field(default_factory=lambda: os.getenv('DEEPSEEK_BASE_URL', 'https://api.deepseek.com'))
+    deepseek_model: str = field(default_factory=lambda: os.getenv('DEEPSEEK_MODEL', 'deepseek-chat'))
+    ai_min_confidence: float = field(default_factory=lambda: float(os.getenv('QUANT_AI_MIN_CONFIDENCE', '0.65')))
+    ai_review_max_age: int = field(default_factory=lambda: int(os.getenv('QUANT_AI_REVIEW_MAX_AGE_SECONDS', '90')))
+    ai_advice_seconds: int = field(default_factory=lambda: int(os.getenv('QUANT_AI_ADVICE_SECONDS', '900')))
+    smtp_host: str = 'smtp.qq.com'
+    smtp_port: int = 465
+    smtp_user: str = field(default_factory=lambda: os.getenv('QQ_SMTP_USER', ''))
+    smtp_password: str = field(default_factory=lambda: os.getenv('QQ_SMTP_AUTH_CODE', ''))
+    mail_to: str = field(default_factory=lambda: os.getenv('QQ_MAIL_TO', ''))
+
+    @property
+    def base_url(self):
+        return 'https://demo-fapi.binance.com' if self.mode == 'testnet' else 'https://fapi.binance.com'
+
+    @property
+    def mail_ready(self):
+        return bool(self.smtp_user and self.smtp_password and self.mail_to)
+
+    def validate(self):
+        if self.mode not in {'paper', 'testnet', 'live'}:
+            raise ValueError('QUANT_MODE must be paper/testnet/live')
+        if self.strategy not in {'sma_cross', 'bollinger'}:
+            raise ValueError('Unknown strategy')
+        if not self.symbols or len(set(self.symbols)) != len(self.symbols) or any(not s.isalnum() or not s.endswith('USDT') for s in self.symbols):
+            raise ValueError('Unique USDT symbols required')
+        if self.interval not in {'1m','3m','5m','15m','30m','1h','2h','4h','6h','8h','12h','1d'}:
+            raise ValueError('Unsupported kline interval')
+        if not 1 <= self.fast < self.slow <= 200 or not 2 <= self.boll_period <= 200:
+            raise ValueError('Invalid indicator periods')
+        values = [self.order_notional,self.max_notional,self.stop_pct,self.take_pct,self.daily_loss,self.paper_cash,self.fee_rate,self.boll_deviation]
+        if any(not math.isfinite(v) or v <= 0 for v in values):
+            raise ValueError('Risk settings must be finite and positive')
+        if not 0 < self.stop_pct < 0.5 or not 0 < self.take_pct < 1 or not 1 <= self.leverage <= 20:
+            raise ValueError('Invalid stop/take/leverage')
+        if self.order_notional > self.max_notional or self.max_positions < 1 or self.poll_seconds < 5:
+            raise ValueError('Invalid exposure or polling limits')
+        if self.mode != 'paper' and not (self.api_key and self.api_secret):
+            raise ValueError('Binance credentials are missing')
+        if self.mode == 'live' and not self.live_enabled:
+            raise ValueError('Live trading requires QUANT_LIVE_ENABLED=true')
+        if not math.isfinite(self.ai_min_confidence) or not 0 <= self.ai_min_confidence <= 1 or not 10 <= self.ai_review_max_age <= 300:
+            raise ValueError('Invalid AI confidence or review expiry')
+        if self.community_poll_seconds < 30:
+            raise ValueError('Community polling must be at least 30 seconds')
+        if self.ai_advice_seconds < 300:
+            raise ValueError('AI advice interval must be at least 300 seconds')
+        Path(self.db_path).parent.mkdir(parents=True, exist_ok=True)
+
+    def public(self):
+        return {k: getattr(self,k) for k in ('mode','enabled','symbols','strategy','interval','fast','slow','boll_period','allow_short','leverage','order_notional','max_notional','max_positions','stop_pct','take_pct','daily_loss')} | {
+            'credentials_configured': bool(self.api_key and self.api_secret),
+            'mail_configured': self.mail_ready,
+            'community_enabled': self.community_enabled,
+            'community_agent_id': self.community_agent_id,
+            'ai_enabled': self.ai_enabled,
+            'ai_configured': bool(self.deepseek_api_key),
+            'ai_model': self.deepseek_model,
+            'observation_only': self.observation_only,
+            'ai_advice_seconds': self.ai_advice_seconds,
+            'execution_enabled': self.enabled and not self.observation_only and (self.mode != 'live' or self.live_enabled),
+            'quiet_hours': 'UTC+8 00:00–08:00',
+            'report_hours': '08,10,12,14,16,18,20,22',
+        }
