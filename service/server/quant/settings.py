@@ -43,6 +43,7 @@ class Settings:
     ai_min_confidence: float = field(default_factory=lambda: float(os.getenv('QUANT_AI_MIN_CONFIDENCE', '0.65')))
     ai_review_max_age: int = field(default_factory=lambda: int(os.getenv('QUANT_AI_REVIEW_MAX_AGE_SECONDS', '90')))
     ai_advice_seconds: int = field(default_factory=lambda: int(os.getenv('QUANT_AI_ADVICE_SECONDS', '900')))
+    paper_review_relaxed: bool = False
     smtp_host: str = 'smtp.qq.com'
     smtp_port: int = 465
     smtp_user: str = field(default_factory=lambda: os.getenv('QQ_SMTP_USER', ''))
@@ -98,6 +99,9 @@ class Settings:
             'ai_model': self.deepseek_model,
             'observation_only': self.observation_only,
             'ai_advice_seconds': self.ai_advice_seconds,
+            'ai_min_confidence': self.ai_min_confidence,
+            'ai_review_max_age_seconds': self.ai_review_max_age,
+            'ai_review_profile': 'paper_relaxed' if self.mode == 'paper' and self.paper_review_relaxed else 'standard',
             'execution_enabled': self.enabled and not self.observation_only and (self.mode != 'live' or self.live_enabled),
             'quiet_hours': 'UTC+8 00:00–08:00',
             'report_hours': '08,10,12,14,16,18,20,22',

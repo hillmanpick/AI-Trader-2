@@ -58,6 +58,30 @@ def test_missing_key_and_network_failure_block_entries(cfg):
     assert result['status'] == 'error' and result['decision'] == 'reject'
 
 
+@pytest.mark.parametrize('mode,relaxed,threshold,expected,profile', [
+    ('paper', True, .55, 'allow', 'paper_relaxed'),
+    ('paper', False, .65, 'reject', 'standard'),
+    ('live', True, .65, 'reject', 'standard'),
+])
+def test_relaxed_review_and_lower_threshold_apply_only_to_paper(cfg, mode, relaxed, threshold, expected, profile):
+    from quant.ai_review import SYSTEM, PAPER_SYSTEM
+    cfg = replace(cfg, mode=mode, paper_review_relaxed=relaxed, ai_min_confidence=threshold)
+    session = model_response({'decision':'allow', 'confidence':.6, 'reason':'行情支持'})
+    with patch('quant.ai_review.requests.Session', return_value=session):
+        result = DeepSeekReviewer(cfg).review({'symbol':'BTCUSDT','action':'long'}, {})
+    assert result['decision'] == expected
+    assert result['telemetry']['review_profile'] == profile
+    body = session.__enter__.return_value.post.call_args.kwargs['json']
+    assert body['messages'][0]['content'] == (PAPER_SYSTEM if profile == 'paper_relaxed' else SYSTEM)
+
+
+def test_explicit_model_rejection_is_not_overridden_by_relaxed_mode(cfg):
+    cfg = replace(cfg, paper_review_relaxed=True, ai_min_confidence=.55)
+    session = model_response({'decision':'reject', 'confidence':.9, 'reason':'明确反向证据'})
+    with patch('quant.ai_review.requests.Session', return_value=session):
+        assert DeepSeekReviewer(cfg).review({'symbol':'BTCUSDT','action':'long'}, {})['decision'] == 'reject'
+
+
 def test_paper_review_uses_final_json_without_reasoning_and_records_usage(cfg):
     session = model_response({'decision':'allow','confidence':.9,'reason':'ok'})
     response = session.__enter__.return_value.post.return_value.__enter__.return_value
@@ -171,6 +195,29 @@ def test_stale_approval_cannot_open_position(cfg):
         engine.finish_review('BTCUSDT',62000)
     engine.execute.assert_not_called()
     assert store.get('ai:BTCUSDT')['status'] == 'expired'
+
+
+@pytest.mark.parametrize('elapsed,bar_end,allowed', [(120, 1000, True), (181, 1000, False), (120, 500, False)])
+def test_paper_extended_review_still_expires_at_time_or_next_candle(cfg, elapsed, bar_end, allowed):
+    cfg = replace(cfg, ai_review_max_age=180)
+    engine, store, future = review_engine(cfg)
+    engine.review_jobs['BTCUSDT'][2]['valid_until'] = bar_end
+    future.set_result({'decision':'allow','confidence':.6,'reason':'ok','status':'complete'})
+    with patch('quant.engine.time.monotonic', return_value=100+elapsed), patch('quant.engine.time.time', return_value=.5):
+        engine.finish_review('BTCUSDT',62000)
+    assert engine.execute.called == allowed
+
+
+def test_review_receives_actual_strategy_sma_periods_and_values(cfg):
+    cfg = replace(cfg, fast=3, slow=10)
+    engine = Engine(cfg, Store(cfg.db_path), MagicMock())
+    pool = MagicMock()
+    engine.review_pool = pool
+    bars = [[i*1000, 0, 0, 0, i+1, 0, (i+1)*1000-1] for i in range(40)]
+    engine.review_entry('BTCUSDT', 'long', 40, bars, 39000)
+    candidate = pool.submit.call_args.args[1]
+    assert candidate['sma'] == {'fast_period':3,'slow_period':10,'fast':39,'slow':35.5,
+                                'previous_fast':38,'previous_slow':34.5}
 
 
 def test_pause_is_rechecked_after_ai_approval(cfg):

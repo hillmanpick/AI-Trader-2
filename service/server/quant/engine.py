@@ -29,6 +29,13 @@ class Engine:
         candidate = {'symbol':symbol,'action':action,'strategy':self.cfg.strategy,'interval':self.cfg.interval,
                      'price':price,'closed_prices':[float(r[4]) for r in bars[-40:]],'bar':bar_id,
                      'valid_until':2*int(bars[-1][6])-int(bars[-1][0])+1}
+        if self.cfg.strategy == 'sma_cross':
+            closes = [float(r[4]) for r in bars]
+            candidate['sma'] = {'fast_period': self.cfg.fast, 'slow_period': self.cfg.slow,
+                                'fast': sum(closes[-self.cfg.fast:])/self.cfg.fast,
+                                'slow': sum(closes[-self.cfg.slow:])/self.cfg.slow,
+                                'previous_fast': sum(closes[-self.cfg.fast-1:-1])/self.cfg.fast,
+                                'previous_slow': sum(closes[-self.cfg.slow-1:-1])/self.cfg.slow}
         if not self.cfg.deepseek_api_key:
             self.store.set(f'ai:{symbol}',self.reviewer.review(candidate,{}) | {'at':utcnow(),'action':action,'bar':bar_id})
             return

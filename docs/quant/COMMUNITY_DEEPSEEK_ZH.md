@@ -29,6 +29,18 @@ QUANT_AI_MIN_CONFIDENCE=0.65
 QUANT_AI_REVIEW_MAX_AGE_SECONDS=90
 ```
 
+模拟盘可以单独使用更积极的审核参数，不影响实盘只读观察：
+
+```dotenv
+QUANT_PAPER_SMA_FAST=3
+QUANT_PAPER_SMA_SLOW=10
+QUANT_PAPER_AI_MIN_CONFIDENCE=0.55
+QUANT_PAPER_AI_REVIEW_MAX_AGE_SECONDS=180
+QUANT_PAPER_AI_RELAXED=true
+```
+
+模拟盘的宽松审核仍会拒绝明确反向证据、异常响应和过期信号；它不会自动改变实盘配置或打开实盘交易。
+
 只需把 DeepSeek 控制台的 API Key 填到 `DEEPSEEK_API_KEY=` 后面。公开数据不需要填写 `AI4TRADE_TOKEN`；预留此字段仅用于将来有权限的官方接口，不应填写币安密钥。
 模型名称、可用性和额度以你的 DeepSeek 账户为准；本次没有 DS 密钥，未验证实际模型推理。
 保存后执行：
@@ -49,7 +61,7 @@ sudo docker compose up -d --no-build --pull never --force-recreate api quant com
 
 AI 已启用但未配置 DS 密钥时不开新仓；止盈、止损、规则平仓继续运行。模型超时、异常、格式错误、审核过期或置信度不足均不开仓。
 模型后台异步运行，最多两个待审核任务，不阻塞风险检查；审核结果返回后重新检查当前仓位、余额、暂停状态、每日亏损和总风险，使用当前价格执行。
-跨越下一根 K 线或超过 90 秒的结果不执行；重启丢弃未完成审核，不重放旧信号。
+标准审核跨越下一根 K 线或超过 90 秒的结果不执行；模拟盘宽松档最长等待 180 秒，但跨越下一根 K 线仍不执行。重启丢弃未完成审核，不重放旧信号。
 已有候选信号按消费记录处理，不会在填入密钥后追单旧信号；等待下一个信号。
 
 社区由独立 `community-worker` 每分钟拉取，网页读取缓存。单个接口失败时保留旧数据并标注异常，不会阻塞交易。

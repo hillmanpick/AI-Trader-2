@@ -14,6 +14,14 @@ SYSTEM = '''你是量化交易的开仓审核器。你只能决定是否放行�
 结合已收盘行情与候选方向审慎判断。社区观点不等于独立证据，无社区数据时仅使用行情。
 只返回 JSON 对象，且只能包含 decision（allow 或 reject）、confidence（0 到 1 的数字）、reason（简短中文原因）。'''
 
+PAPER_SYSTEM = SYSTEM.replace('审慎判断', '按当前模拟盘参数判断') + '''
+当前是独立虚拟模拟盘，以观察规则策略的交易表现为目标，采用宽松审核。
+以 candidate 中当前周期、均线参数及实际均线数值为准；不得用社区其他周期或其他均线参数替代本策略。
+规则信号明确且当前行情没有明显反向证据时可以放行，不要求额外指标确认或社区一致支持。
+社区缺失、一般性分歧或更长周期方向不同不能单独成为否决理由；短线均线交叉可以是趋势反转初期。
+有明确行情冲突或输入异常时仍须拒绝，不得为了增加成交强行放行。
+confidence 表示你对本次 decision 的信心，不是获利概率，不得编造收益承诺。'''
+
 
 class DeepSeekReviewer:
     def __init__(self, cfg):
@@ -30,13 +38,14 @@ class DeepSeekReviewer:
         # Simple paper allow/reject checks do not need an unbounded reasoning trace.
         paper = self.cfg.mode == 'paper'
         request_body = {'model': self.cfg.deepseek_model,
-                        'messages': [{'role': 'system', 'content': SYSTEM},
+                        'messages': [{'role': 'system', 'content': PAPER_SYSTEM if paper and self.cfg.paper_review_relaxed else SYSTEM},
                                      {'role': 'user', 'content': json.dumps(payload, ensure_ascii=False)}],
                         'response_format': {'type': 'json_object'}, 'temperature': 0,
                         'max_tokens': 512 if paper else 2048}
         if paper:
             request_body['thinking'] = {'type':'disabled'}
-        telemetry = {'model': self.cfg.deepseek_model, 'thinking': 'disabled' if paper else 'default'}
+        telemetry = {'model': self.cfg.deepseek_model, 'thinking': 'disabled' if paper else 'default',
+                     'review_profile': 'paper_relaxed' if paper and self.cfg.paper_review_relaxed else 'standard'}
         started = time.monotonic()
 
         def failure(code, reason):

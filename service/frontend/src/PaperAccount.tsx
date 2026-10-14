@@ -31,6 +31,7 @@ export function PaperAccount() {
       {data.worker.error && <p role="alert" style={{ color: '#edac65' }}>{data.worker.error}</p>}
       <p>初始虚拟资金 10,000 USDT · 每笔 {fmt(data.config.order_notional)} USDT · 总上限 {fmt(data.config.max_notional)} USDT · 最多 {data.config.max_positions} 个仓位</p>
       <p>{data.config.symbols.join('、')} · {data.config.interval} K 线 · 均线 {data.config.fast}/{data.config.slow} · 模拟止损 {data.config.stop_pct * 100}% / 止盈 {data.config.take_pct * 100}% · 每日亏损上限 {fmt(data.config.daily_loss)} USDT</p>
+      <p>AI 审核：{data.config.ai_review_profile === 'paper_relaxed' ? '宽松模拟审核' : '标准审核'} · 放行置信度阈值 {fmt(data.config.ai_min_confidence * 100)}% · 最长等待 {data.config.ai_review_max_age_seconds} 秒，跨过下一根 K 线仍作废。</p>
       <p>虚拟权益 {fmt(data.account.equity)} USDT · 虚拟可用 {fmt(data.account.available)} USDT · {data.daily_loss_blocked ? '每日亏损限制已触发，停止开新仓' : '等待策略信号，通过 AI 审核后才模拟成交'}</p>
       <p>启动时不补做历史信号，不强制开仓。模拟费用已计入，未模拟资金费、滑点及强平。</p>
       {Object.entries(data.positions || {}).length ? <div className="table-container"><table className="table"><thead><tr><th>合约</th><th>方向</th><th>数量</th><th>入场价</th><th>标记价</th><th>模拟浮盈亏</th></tr></thead><tbody>{Object.entries(data.positions).map(([symbol, raw]) => { const p = raw as any; return <tr key={symbol}><td>{symbol}</td><td>{p.amount > 0 ? '多' : '空'}</td><td>{fmt(Math.abs(p.amount), 8)}</td><td>{fmt(p.entry, 6)}</td><td>{fmt(p.mark, 6)}</td><td>{fmt(p.pnl, 4)} USDT</td></tr> })}</tbody></table></div> : <p>独立模拟账户当前空仓。</p>}

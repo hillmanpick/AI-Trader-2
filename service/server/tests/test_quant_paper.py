@@ -36,6 +36,30 @@ def test_simulation_has_separate_journal_and_no_account_keys(setup, monkeypatch)
     with pytest.raises(ValueError, match='separate'):paper_settings(base)
 
 
+def test_paper_review_overrides_leave_observer_settings_unchanged(setup, monkeypatch):
+    base, _ = setup
+    monkeypatch.setenv('QUANT_PAPER_AI_MIN_CONFIDENCE', '0.55')
+    monkeypatch.setenv('QUANT_PAPER_AI_REVIEW_MAX_AGE_SECONDS', '180')
+    monkeypatch.setenv('QUANT_PAPER_AI_RELAXED', 'true')
+    monkeypatch.setenv('QUANT_PAPER_SMA_FAST', '3')
+    monkeypatch.setenv('QUANT_PAPER_SMA_SLOW', '10')
+    cfg = paper_settings(base)
+    assert (cfg.fast, cfg.slow, cfg.ai_min_confidence, cfg.ai_review_max_age) == (3, 10, .55, 180)
+    assert cfg.public()['ai_review_profile'] == 'paper_relaxed'
+    assert (base.ai_min_confidence, base.ai_review_max_age, base.paper_review_relaxed) == (.65, 90, False)
+    assert base.observation_only and not base.enabled
+    assert not cfg.api_key and not cfg.api_secret
+
+
+@pytest.mark.parametrize('name,value', [('QUANT_PAPER_AI_MIN_CONFIDENCE', '1.1'),
+                                      ('QUANT_PAPER_AI_REVIEW_MAX_AGE_SECONDS', '301')])
+def test_invalid_paper_review_settings_fail_validation(setup, monkeypatch, name, value):
+    base, _ = setup
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ValueError):
+        paper_settings(base)
+
+
 @pytest.mark.parametrize('method,path,signed', [
     ('POST','/fapi/v1/order',False),('DELETE','/fapi/v1/order',False),
     ('GET','/fapi/v3/account',True),('GET','/fapi/v3/positionRisk',True),
