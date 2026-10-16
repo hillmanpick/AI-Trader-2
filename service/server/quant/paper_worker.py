@@ -21,7 +21,6 @@ def main():
     source = Store(base.db_path)
     lock = open(cfg.db_path+'.lock', 'a')
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    store.set('config', cfg.public())
     market = RealtimePaperMarket(cfg)
     market._start_market_stream()
     engine = Engine(cfg, store, market)

@@ -6,9 +6,13 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from .notifier import local_time
-from .strategies import signal
+from .strategies import signal, market_regime, volatility_plan, update_dynamic_exit
 from .store import utcnow
 from .ai_review import DeepSeekReviewer
+
+
+def paper_margin_used(position):
+    return position.get('initial_margin', abs(position['amount'])*position['entry']/position.get('leverage',1))
 
 
 class Engine:
@@ -24,27 +28,35 @@ class Engine:
         if not self.cfg.ai_enabled:
             self.execute(symbol,action,price,self.cfg.strategy,str(bar_id))
             return
-        if symbol in self.review_jobs or len(self.review_jobs) >= 2:
-            return
+        slots = 4 if self.cfg.mode == 'paper' and self.cfg.strategy == 'adaptive' else 2
+        if symbol in self.review_jobs or len(self.review_jobs) >= slots:
+            return False
         candidate = {'symbol':symbol,'action':action,'strategy':self.cfg.strategy,'interval':self.cfg.interval,
                      'price':price,'closed_prices':[float(r[4]) for r in bars[-40:]],'bar':bar_id,
                      'valid_until':2*int(bars[-1][6])-int(bars[-1][0])+1}
-        if self.cfg.strategy == 'sma_cross':
+        if self.cfg.strategy in ('sma_cross', 'adaptive'):
             closes = [float(r[4]) for r in bars]
             candidate['sma'] = {'fast_period': self.cfg.fast, 'slow_period': self.cfg.slow,
                                 'fast': sum(closes[-self.cfg.fast:])/self.cfg.fast,
                                 'slow': sum(closes[-self.cfg.slow:])/self.cfg.slow,
                                 'previous_fast': sum(closes[-self.cfg.fast-1:-1])/self.cfg.fast,
                                 'previous_slow': sum(closes[-self.cfg.slow-1:-1])/self.cfg.slow}
+            if self.cfg.strategy == 'adaptive':
+                from statistics import fmean, pstdev
+                candidate['regime'] = market_regime(closes)
+                window = closes[-self.cfg.boll_period:]
+                candidate['range'] = {'mean': fmean(window), 'width': pstdev(window)*self.cfg.boll_deviation,
+                                      'period': self.cfg.boll_period}
         if not self.cfg.deepseek_api_key:
             self.store.set(f'ai:{symbol}',self.reviewer.review(candidate,{}) | {'at':utcnow(),'action':action,'bar':bar_id})
             return
         if self.review_pool is None:
-            self.review_pool = ThreadPoolExecutor(max_workers=2,thread_name_prefix='entry-review')
+            self.review_pool = ThreadPoolExecutor(max_workers=slots,thread_name_prefix='entry-review')
         snapshot = self.store.get('community',{}) if self.cfg.community_enabled else {}
         future = self.review_pool.submit(self.reviewer.review,candidate,snapshot)
         self.review_jobs[symbol] = (future,time.monotonic(),candidate)
         self.store.set(f'ai:{symbol}',{'status':'pending','reason':'DeepSeek 正在审核开仓信号','at':utcnow(),'action':action,'bar':bar_id})
+        return True
 
     def finish_review(self,symbol,price):
         job = self.review_jobs.get(symbol)
@@ -83,6 +95,17 @@ class Engine:
         if saved and saved != fingerprint:
             raise ValueError('Mode/account changed: use a separate QUANT_DB_PATH; preserve the old journal')
         self.store.set('identity',fingerprint)
+        if self.cfg.mode == 'paper':
+            previous = self.store.get('config',{})
+            positions = self.store.get('positions',{})
+            for p in positions.values():
+                # Freeze legacy risk before publishing the new entry configuration.
+                p.setdefault('leverage', previous.get('leverage',1))
+                p.setdefault('initial_margin', abs(p['amount'])*p['entry']/p['leverage'])
+                p.setdefault('stop_pct', previous.get('stop_pct',self.cfg.stop_pct))
+                p.setdefault('take_pct', previous.get('take_pct',self.cfg.take_pct))
+                p.setdefault('dynamic_exits',False)
+            self.store.set('positions',positions)
         self.store.set('config',self.cfg.public())
         self.exchange.sync_time()
         self.exchange.load_rules()
@@ -188,8 +211,11 @@ class Engine:
             raise RuntimeError('Filled order not yet visible in position snapshot; entry paused pending reconciliation')
 
     def paper_order(self,symbol,amount,price,reason,key):
+        # Adverse fill for both entries and exits; marks remain unslipped.
+        price *= 1+self.cfg.paper_slippage*(1 if amount > 0 else -1)
         positions = self.store.get('positions',{})
         old = positions.get(symbol)
+        risk_plan = self.store.get(f'volatility:{symbol}',{}) if self.cfg.paper_dynamic_exits else {}
         balance = self.store.get('paper_balance',self.cfg.paper_cash)
         pnl = (price-old['entry'])*old['amount'] if old else 0
         fee = abs(amount)*price*self.cfg.fee_rate
@@ -198,12 +224,20 @@ class Engine:
         if old:
             del positions[symbol]
         else:
-            positions[symbol] = {'amount':amount,'entry':price,'mark':price,'pnl':0}
+            positions[symbol] = {'amount':amount,'entry':price,'mark':price,'pnl':0,
+                                 'leverage':self.cfg.leverage, 'stop_pct':risk_plan.get('stop_pct',self.cfg.stop_pct),
+                                 'take_pct':risk_plan.get('take_pct',self.cfg.take_pct), 'opened_at':utcnow(),
+                                 'initial_margin': self.cfg.paper_margin or abs(amount)*price/self.cfg.leverage,
+                                 'maintenance_rate':self.cfg.paper_maintenance_rate,
+                                 'dynamic_exits':bool(risk_plan), 'exit_plan':risk_plan}
         # Single transaction: simulated fill, wallet, position, and notification.
         with self.store.connect() as c:
+            # Simplified isolated liquidation: loss cannot draw other positions' collateral.
+            if old and reason == 'paper_liquidation':
+                pnl = max(pnl-fee,-paper_margin_used(old))+fee
             wallet = balance+pnl-fee
             equity = wallet+sum((p.get('mark',p['entry'])-p['entry'])*p['amount'] for p in positions.values())
-            margin = sum(abs(p['amount'])*p['entry']/self.cfg.leverage for p in positions.values())
+            margin = sum(paper_margin_used(p) for p in positions.values())
             account = {'wallet':wallet,'equity':equity,'available':equity-margin,'updated_at':utcnow()}
             for k,v in [('positions',positions),('paper_balance',wallet),('account',account)]:
                 c.execute('INSERT INTO kv VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(k,json.dumps(v)))
@@ -231,6 +265,9 @@ class Engine:
             exposure = sum(abs(p['amount'])*p['mark'] for p in positions.values())
             if exposure+self.cfg.order_notional > self.cfg.max_notional:
                 return
+            if self.cfg.mode == 'paper' and self.cfg.paper_max_margin:
+                if sum(paper_margin_used(p) for p in positions.values())+self.cfg.paper_margin > self.cfg.paper_max_margin:
+                    return
             required = self.cfg.order_notional/self.cfg.leverage + self.cfg.order_notional*0.002
             if float(account.get('available',0)) < required:
                 return
@@ -271,15 +308,21 @@ class Engine:
             self.recover_orders()
         positions = self.store.get('positions',{})
         marks = {s:self.exchange.mark(s) for s in self.cfg.symbols}
-        for symbol,p in positions.items():
+        if any(not math.isfinite(price) or price <= 0 for price in marks.values()):
+            raise ValueError('Invalid mark price')
+        for symbol,p in list(positions.items()):
             if symbol not in marks:
                 raise ValueError('Configured symbols changed while positions exist; restore symbols before running')
             p['mark'] = marks[symbol]
             p['pnl'] = (p['mark']-p['entry'])*p['amount']
+            if (self.cfg.mode == 'paper' and p.get('leverage',1) > 1
+                    and paper_margin_used(p)+p['pnl'] <= abs(p['amount'])*p['mark']*p.get('maintenance_rate',self.cfg.paper_maintenance_rate)):
+                self.paper_order(symbol,-p['amount'],p['mark'],'paper_liquidation',utcnow())
+                del positions[symbol]
         self.store.set('positions',positions)
         if self.cfg.mode == 'paper':
             wallet = self.store.get('paper_balance',self.cfg.paper_cash)
-            margin = sum(abs(p['amount'])*p['entry']/self.cfg.leverage for p in positions.values())
+            margin = sum(paper_margin_used(p) for p in positions.values())
             equity = wallet+sum(p['pnl'] for p in positions.values())
             self.store.set('account',{'wallet':wallet,'equity':equity,'available':equity-margin,'updated_at':utcnow()})
         else:
@@ -292,8 +335,19 @@ class Engine:
                 raise ValueError('Invalid mark price')
             p = self.store.get('positions',{}).get(symbol)
             if p:
+                if self.cfg.mode == 'paper' and p.get('dynamic_exits'):
+                    plan = self.store.get(f'volatility:{symbol}', p['exit_plan'])
+                    exit_reason = update_dynamic_exit(p,plan,self.cfg.fee_rate,self.cfg.paper_slippage)
+                    positions = self.store.get('positions',{})
+                    positions[symbol] = p
+                    self.store.set('positions',positions)
+                    if exit_reason:
+                        self.execute(symbol,'close',price,exit_reason,utcnow())
+                        continue
                 move = (price/p['entry']-1)*(1 if p['amount']>0 else -1)
-                if move <= -self.cfg.stop_pct or move >= self.cfg.take_pct:
+                stop_pct = p.get('stop_pct', self.cfg.stop_pct) if self.cfg.mode == 'paper' else self.cfg.stop_pct
+                take_pct = p.get('take_pct', self.cfg.take_pct) if self.cfg.mode == 'paper' else self.cfg.take_pct
+                if not p.get('dynamic_exits') and (move <= -stop_pct or move >= take_pct):
                     self.execute(symbol,'close',price,'stop_loss' if move<0 else 'take_profit',utcnow())
                     continue
                 if self.cfg.mode != 'paper':
@@ -314,6 +368,8 @@ class Engine:
                     raise ValueError('Stale closed candles; new orders blocked')
                 self.candle_cache[symbol] = (int(bars[-1][6])+duration+1500,bars)
             bar_id = int(bars[-1][0])
+            if self.cfg.mode == 'paper' and self.cfg.paper_dynamic_exits:
+                self.store.set(f'volatility:{symbol}',volatility_plan(bars,price,self.cfg.leverage,self.cfg.paper_maintenance_rate))
             last = self.store.get(f'bar:{symbol}')
             if last is None:
                 # Startup observes current candle, never replays historical entries.
@@ -332,8 +388,12 @@ class Engine:
                 exposure = sum(abs(pos['amount'])*pos['mark'] for pos in positions.values())
                 if (self.cfg.enabled and not self.store.get('paused',False) and not loss_blocked
                         and len(positions)<self.cfg.max_positions and exposure+self.cfg.order_notional<=self.cfg.max_notional
+                        and (not self.cfg.paper_max_margin or self.cfg.mode != 'paper'
+                             or sum(paper_margin_used(pos) for pos in positions.values())+self.cfg.paper_margin<=self.cfg.paper_max_margin)
                         and float(account.get('available',0)) >= self.cfg.order_notional/self.cfg.leverage+self.cfg.order_notional*0.002):
-                    self.review_entry(symbol,action,price,bars,bar_id)
+                    if self.review_entry(symbol,action,price,bars,bar_id) is False:
+                        # Retry a busy review slot within this candle, without losing the signal.
+                        self.store.set(f'bar:{symbol}',last)
             elif action == 'close':
                 self.execute(symbol,action,price,self.cfg.strategy,str(bar_id))
         return 'running' if self.cfg.enabled and not self.store.get('paused',False) else 'paused_entries'

@@ -141,3 +141,4 @@ change.md
 /deploy/tls/
 /deploy/data/
 /deploy/postgres-data/
+/work/

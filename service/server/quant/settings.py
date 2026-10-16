@@ -44,6 +44,11 @@ class Settings:
     ai_review_max_age: int = field(default_factory=lambda: int(os.getenv('QUANT_AI_REVIEW_MAX_AGE_SECONDS', '90')))
     ai_advice_seconds: int = field(default_factory=lambda: int(os.getenv('QUANT_AI_ADVICE_SECONDS', '900')))
     paper_review_relaxed: bool = False
+    paper_slippage: float = 0
+    paper_margin: float = 0
+    paper_max_margin: float = 0
+    paper_maintenance_rate: float = .005
+    paper_dynamic_exits: bool = False
     smtp_host: str = 'smtp.qq.com'
     smtp_port: int = 465
     smtp_user: str = field(default_factory=lambda: os.getenv('QQ_SMTP_USER', ''))
@@ -61,8 +66,19 @@ class Settings:
     def validate(self):
         if self.mode not in {'paper', 'testnet', 'live'}:
             raise ValueError('QUANT_MODE must be paper/testnet/live')
-        if self.strategy not in {'sma_cross', 'bollinger'}:
+        if self.strategy not in {'sma_cross', 'bollinger', 'adaptive'}:
             raise ValueError('Unknown strategy')
+        if self.strategy == 'adaptive' and self.mode != 'paper':
+            raise ValueError('Adaptive strategy is paper-only')
+        if not math.isfinite(self.paper_slippage) or not 0 <= self.paper_slippage <= .01:
+            raise ValueError('Invalid paper slippage')
+        if any(not math.isfinite(v) or v < 0 for v in (self.paper_margin,self.paper_max_margin)):
+            raise ValueError('Invalid paper margin')
+        if bool(self.paper_margin) != bool(self.paper_max_margin) or self.paper_margin > self.paper_max_margin:
+            raise ValueError('Invalid paper margin limits')
+        if self.paper_margin and (not math.isclose(self.order_notional,self.paper_margin*self.leverage)
+                                  or not math.isclose(self.max_notional,self.paper_max_margin*self.leverage)):
+            raise ValueError('Paper margin and notional disagree')
         if not self.symbols or len(set(self.symbols)) != len(self.symbols) or any(not s.isalnum() or not s.endswith('USDT') for s in self.symbols):
             raise ValueError('Unique USDT symbols required')
         if self.interval not in {'1m','3m','5m','15m','30m','1h','2h','4h','6h','8h','12h','1d'}:
@@ -72,8 +88,10 @@ class Settings:
         values = [self.order_notional,self.max_notional,self.stop_pct,self.take_pct,self.daily_loss,self.paper_cash,self.fee_rate,self.boll_deviation]
         if any(not math.isfinite(v) or v <= 0 for v in values):
             raise ValueError('Risk settings must be finite and positive')
-        if not 0 < self.stop_pct < 0.5 or not 0 < self.take_pct < 1 or not 1 <= self.leverage <= 20:
+        if not 0 < self.stop_pct < 0.5 or not 0 < self.take_pct < 1 or not 1 <= self.leverage <= (100 if self.mode == 'paper' else 20):
             raise ValueError('Invalid stop/take/leverage')
+        if not math.isfinite(self.paper_maintenance_rate) or not 0 < self.paper_maintenance_rate < 1/self.leverage:
+            raise ValueError('Invalid simulated maintenance margin')
         if self.order_notional > self.max_notional or self.max_positions < 1 or self.poll_seconds < 5:
             raise ValueError('Invalid exposure or polling limits')
         if self.mode != 'paper' and not (self.api_key and self.api_secret):
@@ -100,6 +118,12 @@ class Settings:
             'observation_only': self.observation_only,
             'ai_advice_seconds': self.ai_advice_seconds,
             'ai_min_confidence': self.ai_min_confidence,
+            'paper_slippage_bps': self.paper_slippage * 10000,
+            'paper_margin': self.paper_margin,
+            'paper_max_margin': self.paper_max_margin,
+            'paper_maintenance_rate': self.paper_maintenance_rate,
+            'paper_dynamic_exits': self.paper_dynamic_exits,
+            'poll_seconds': self.poll_seconds,
             'ai_review_max_age_seconds': self.ai_review_max_age,
             'ai_review_profile': 'paper_relaxed' if self.mode == 'paper' and self.paper_review_relaxed else 'standard',
             'execution_enabled': self.enabled and not self.observation_only and (self.mode != 'live' or self.live_enabled),

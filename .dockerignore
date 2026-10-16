@@ -11,4 +11,5 @@ deploy/tls
 deploy/.env
 deploy/access.txt
 deploy/htpasswd
+work
 research-local
