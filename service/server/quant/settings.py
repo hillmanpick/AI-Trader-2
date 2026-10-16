@@ -49,6 +49,7 @@ class Settings:
     paper_max_margin: float = 0
     paper_maintenance_rate: float = .005
     paper_dynamic_exits: bool = False
+    paper_entry_filter: str = 'shadow'
     smtp_host: str = 'smtp.qq.com'
     smtp_port: int = 465
     smtp_user: str = field(default_factory=lambda: os.getenv('QQ_SMTP_USER', ''))
@@ -70,6 +71,8 @@ class Settings:
             raise ValueError('Unknown strategy')
         if self.strategy == 'adaptive' and self.mode != 'paper':
             raise ValueError('Adaptive strategy is paper-only')
+        if self.paper_entry_filter not in {'shadow','enforce'}:
+            raise ValueError('Paper entry filter must be shadow/enforce')
         if not math.isfinite(self.paper_slippage) or not 0 <= self.paper_slippage <= .01:
             raise ValueError('Invalid paper slippage')
         if any(not math.isfinite(v) or v < 0 for v in (self.paper_margin,self.paper_max_margin)):
@@ -123,6 +126,7 @@ class Settings:
             'paper_max_margin': self.paper_max_margin,
             'paper_maintenance_rate': self.paper_maintenance_rate,
             'paper_dynamic_exits': self.paper_dynamic_exits,
+            'paper_entry_filter': self.paper_entry_filter,
             'poll_seconds': self.poll_seconds,
             'ai_review_max_age_seconds': self.ai_review_max_age,
             'ai_review_profile': 'paper_relaxed' if self.mode == 'paper' and self.paper_review_relaxed else 'standard',

@@ -142,3 +142,4 @@ change.md
 /deploy/data/
 /deploy/postgres-data/
 /work/
+service/server/work/
