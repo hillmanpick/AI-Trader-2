@@ -39,6 +39,7 @@ def register_quant_routes(app):
                 'account':db.get('account',{}), 'positions':db.get('positions',{}),
                 'signals':{s:db.get(f'signal:{s}') for s in paper.symbols},
                 'ai':{s:db.get(f'ai:{s}') for s in paper.symbols},
+                'entry_quality':{s:db.get(f'entry_quality:{s}') for s in paper.symbols},
                 'events':db.events(limit=30), 'orders':db.orders()[:30], 'mail':db.get('mail_status',{})}
 
     @app.get('/api/quant/official/{path:path}')

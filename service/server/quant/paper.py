@@ -31,6 +31,7 @@ def paper_settings(base):
                   paper_margin=margin, paper_max_margin=max_margin,
                   paper_maintenance_rate=float(os.getenv('QUANT_PAPER_MAINTENANCE_RATE', '.005')),
                   paper_dynamic_exits=os.getenv('QUANT_PAPER_DYNAMIC_EXITS','false').lower() == 'true',
+                  paper_entry_filter=os.getenv('QUANT_PAPER_ENTRY_FILTER','shadow'),
                   max_positions=int(os.getenv('QUANT_PAPER_MAX_POSITIONS', '3')),
                   leverage=leverage,
                   paper_slippage=float(os.getenv('QUANT_PAPER_SLIPPAGE_BPS', '0'))/10000,

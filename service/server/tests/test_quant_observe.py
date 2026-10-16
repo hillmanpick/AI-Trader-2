@@ -119,7 +119,7 @@ def test_analysis_does_not_send_balance_position_sizes_or_identifiers(cfg):
     store = Store(cfg.db_path)
     store.set('live_account', snapshot({'totalWalletBalance':'998877','totalMarginBalance':'998877'}, [row(2)]))
     api = MagicMock(offset=0)
-    api.closed_candles.return_value = [[i*60000, 0, 0, 0, '100', 0, (i+1)*60000-1] for i in range(80)]
+    api.closed_candles.return_value = [[i*60000, 100, 101, 99, '100', 0, (i+1)*60000-1] for i in range(80)]
     api.mark.return_value = 110
     analyzer = MagicMock()
     analyzer.analyze.return_value = {'bias':'wait','confidence':.7,'reason':'wait','risk':'risk','status':'complete'}
@@ -146,7 +146,7 @@ def test_advice_can_reuse_realtime_market_client_without_closing_it(cfg):
     store = Store(cfg.db_path)
     store.set('live_account', snapshot({'totalWalletBalance':'100','totalMarginBalance':'100'}, []))
     api = MagicMock()
-    api.closed_candles.return_value = [[i*60000, 0, 0, 0, '100', 0, (i+1)*60000-1] for i in range(80)]
+    api.closed_candles.return_value = [[i*60000, 100, 101, 99, '100', 0, (i+1)*60000-1] for i in range(80)]
     api.mark.return_value = 100
     analyzer = MagicMock()
     analyzer.analyze.return_value = {'bias':'wait','confidence':.7,'reason':'wait','risk':'risk','status':'complete'}

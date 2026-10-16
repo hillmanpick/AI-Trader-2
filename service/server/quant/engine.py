@@ -9,6 +9,7 @@ from .notifier import local_time
 from .strategies import signal, market_regime, volatility_plan, update_dynamic_exit
 from .store import utcnow
 from .ai_review import DeepSeekReviewer
+from .features import indicators, entry_quality
 
 
 def paper_margin_used(position):
@@ -24,6 +25,17 @@ class Engine:
         self.review_jobs = {}
         self.review_pool = None
 
+    def assess_entry(self,symbol,action,price,bars):
+        features = indicators([r[4] for r in bars],self.cfg,
+                              bars if self.cfg.paper_dynamic_exits else None)
+        quality = None
+        if self.cfg.mode == 'paper' and self.cfg.strategy == 'adaptive' and self.cfg.paper_dynamic_exits:
+            plan = volatility_plan(bars,price,self.cfg.leverage,self.cfg.paper_maintenance_rate)
+            quality = entry_quality(features,price,action,self.cfg,plan)
+            self.store.set(f'entry_quality:{symbol}',quality | {'at':utcnow(),'action':action,
+                           'filter_mode':self.cfg.paper_entry_filter,'price':price})
+        return features,quality
+
     def review_entry(self,symbol,action,price,bars,bar_id):
         if not self.cfg.ai_enabled:
             self.execute(symbol,action,price,self.cfg.strategy,str(bar_id))
@@ -34,6 +46,15 @@ class Engine:
         candidate = {'symbol':symbol,'action':action,'strategy':self.cfg.strategy,'interval':self.cfg.interval,
                      'price':price,'closed_prices':[float(r[4]) for r in bars[-40:]],'bar':bar_id,
                      'valid_until':2*int(bars[-1][6])-int(bars[-1][0])+1}
+        features,quality = self.assess_entry(symbol,action,price,bars)
+        candidate['indicators'] = features
+        if quality:
+            candidate['entry_quality'] = quality
+            if self.cfg.paper_entry_filter == 'enforce' and not quality['passes']:
+                self.store.set(f'ai:{symbol}',{'status':'cost_blocked','decision':'reject',
+                    'reason':'扣费后目标空间、盈亏比或追价检查未通过：'+quality['status'],
+                    'at':utcnow(),'action':action,'bar':bar_id})
+                return
         if self.cfg.strategy in ('sma_cross', 'adaptive'):
             closes = [float(r[4]) for r in bars]
             candidate['sma'] = {'fast_period': self.cfg.fast, 'slow_period': self.cfg.slow,
@@ -272,6 +293,14 @@ class Engine:
             if float(account.get('available',0)) < required:
                 return
             amount = float(self.exchange.quantity(symbol,self.cfg.order_notional,price)) * (1 if action=='long' else -1)
+            if (self.cfg.mode == 'paper' and self.cfg.strategy == 'adaptive'
+                    and self.cfg.paper_dynamic_exits and self.cfg.paper_entry_filter == 'enforce'):
+                cached = self.candle_cache.get(symbol)
+                if not cached:
+                    return
+                _,quality = self.assess_entry(symbol,action,price,cached[1])
+                if not quality['passes']:
+                    return
         if self.cfg.mode == 'paper':
             self.paper_order(symbol,amount,price,reason,key)
         else:

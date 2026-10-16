@@ -93,6 +93,7 @@ def test_paper_review_uses_final_json_without_reasoning_and_records_usage(cfg):
     body=session.__enter__.return_value.post.call_args.kwargs['json']
     assert body['thinking']=={'type':'disabled'} and body['max_tokens']==512
     assert result['decision']=='allow' and result['telemetry']['usage']['prompt_cache_hit_tokens']==128
+    assert result['telemetry']['usage']['prompt_cache_hit_rate'] == pytest.approx(128/400)
 
 
 def test_truncated_response_is_identified_and_cannot_allow_entry(cfg,caplog):

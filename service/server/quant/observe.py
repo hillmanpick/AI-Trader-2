@@ -11,6 +11,7 @@ from .community import age_seconds
 from .notifier import Notifier
 from .store import utcnow
 from .strategies import signal
+from .features import indicators
 from .market_stream import MarketStreamMixin
 
 READ_PATHS = {'/fapi/v1/time', '/fapi/v3/account', '/fapi/v3/positionRisk',
@@ -109,6 +110,7 @@ def advice(cfg, store, market_api=None):
             relevant = [p for p in live['positions'] if p['symbol'] == symbol]
             context = {
                 'symbol': symbol, 'interval': cfg.interval, 'price': price, 'closed_prices': closes,
+                'indicators': indicators(closes,cfg,bars),
                 'candle_closed_at': int(bars[-1][6]), 'strategy': cfg.strategy,
                 'rule_candidate': signal(closes, 0, cfg),
                 'position_context': [{'side': 'long' if p['amount'] > 0 else 'short', 'entry': p['entry'],
