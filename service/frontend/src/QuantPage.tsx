@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
 import { LiveAccount } from './LiveAccount'
 import { PaperAccount } from './PaperAccount'
+import { formatLeverage } from './positionFormat'
 
-type Position = { amount: number; entry: number; mark: number; pnl: number }
+type Position = { amount: number; entry: number; mark: number; pnl: number; leverage?: number }
 type Snapshot = {
   config: { observation_only: boolean; ai_advice_seconds: number; execution_enabled: boolean; mode: string; strategy: string; interval: string; symbols: string[]; order_notional: number; max_notional: number; leverage: number; stop_pct: number; take_pct: number; credentials_configured: boolean; mail_configured: boolean; ai_enabled: boolean; ai_configured: boolean; ai_model: string; community_enabled: boolean }
   worker: { status: string; error?: string; heartbeat?: string; market_stream?: { status?: string; reconnects?: number; fresh_marks?: number } }
@@ -90,7 +91,7 @@ export function QuantPage() {
       <div style={box}>
         <h2>{data.config.observation_only ? '历史模拟持仓（已冻结）' : '实际交易进程持仓'}</h2>
         <p>{data.config.observation_only ? '保留原模拟账本，仅作历史参考；此处金额不是实盘余额，也不再执行止盈止损。' : '此处独立于原平台的社区模拟持仓。'}</p>
-        {Object.keys(data.positions).length === 0 ? <p>当前空仓</p> : Object.entries(data.positions).map(([s, p]) => <p key={s}><strong>{s} {p.amount > 0 ? '多' : '空'}</strong>　数量 {Math.abs(p.amount)}　入场 {p.entry}　标记 {p.mark}　浮盈亏 {p.pnl.toFixed(2)} USDT</p>)}
+        {Object.keys(data.positions).length === 0 ? <p>当前空仓</p> : Object.entries(data.positions).map(([s, p]) => <p key={s}><strong>{s} {p.amount > 0 ? '多' : '空'}</strong>　杠杆 {formatLeverage(p.leverage)}　数量 {Math.abs(p.amount)}　入场 {p.entry}　标记 {p.mark}　浮盈亏 {p.pnl.toFixed(2)} USDT</p>)}
       </div>
       <div style={box}>
         <h2>QQ 邮件通知</h2>

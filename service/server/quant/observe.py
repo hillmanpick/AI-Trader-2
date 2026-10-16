@@ -14,7 +14,7 @@ from .strategies import signal
 from .features import indicators
 from .market_stream import MarketStreamMixin
 
-READ_PATHS = {'/fapi/v1/time', '/fapi/v3/account', '/fapi/v3/positionRisk',
+READ_PATHS = {'/fapi/v1/time', '/fapi/v3/account', '/fapi/v3/positionRisk', '/fapi/v1/symbolConfig',
               '/fapi/v1/premiumIndex', '/fapi/v1/klines'}
 
 
@@ -28,6 +28,9 @@ class ReadOnlyBinance(Binance):
             raise RuntimeError('Read-only account client rejects this endpoint')
         return super().request(method, path, params, signed)
 
+    def symbol_config(self):
+        return self.request('GET', '/fapi/v1/symbolConfig', signed=True)
+
 
 class RealtimeReadOnlyBinance(MarketStreamMixin, ReadOnlyBinance):
     pass
@@ -40,7 +43,18 @@ def numeric(value):
     return result
 
 
-def snapshot(account, rows):
+def leverage_value(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        result = numeric(value)
+    except (TypeError, ValueError):
+        return None
+    return int(result) if result >= 1 and result.is_integer() else None
+
+
+def snapshot(account, rows, symbol_configs=()):
+    leverage_by_symbol = {row['symbol']: leverage_value(row.get('leverage')) for row in symbol_configs}
     summary = {target: numeric(account.get(source, 0)) for target, source in {
         'wallet': 'totalWalletBalance', 'equity': 'totalMarginBalance', 'available': 'availableBalance',
         'unrealized': 'totalUnrealizedProfit', 'initial_margin': 'totalInitialMargin',
@@ -57,6 +71,7 @@ def snapshot(account, rows):
         positions.append({
             'symbol': str(row['symbol'])[:30], 'position_side': str(row.get('positionSide', 'BOTH'))[:10],
             'amount': amount, 'entry': numeric(row['entryPrice']), 'mark': numeric(row['markPrice']),
+            'leverage': leverage_value(row.get('leverage')) or leverage_by_symbol.get(row['symbol']),
             'pnl': numeric(row['unRealizedProfit']), 'liquidation': numeric(row.get('liquidationPrice', 0)),
             'notional': numeric(row.get('notional', amount*numeric(row['markPrice']))),
             'initial_margin': numeric(row.get('positionInitialMargin', row.get('initialMargin', 0))),
@@ -74,7 +89,19 @@ def collect(cfg, store, api):
     if api.last_sync < time.time()-1800:
         api.sync_time()
     # Read the entire real account, including manual and hedge positions; never adopt ownership.
-    value = snapshot(api.account(), api.positions())
+    account, rows = api.account(), api.positions()
+    configs = []
+    if any(numeric(row['positionAmt']) and leverage_value(row.get('leverage')) is None for row in rows):
+        try:
+            # One read for all symbols, including both sides of hedge positions.
+            configs = api.symbol_config()
+            if not isinstance(configs, list) or any(not isinstance(row, dict) or 'symbol' not in row for row in configs):
+                raise ValueError('Invalid symbol configuration')
+        except (RuntimeError, TypeError, ValueError):
+            # Keep balances and positions fresh even if optional leverage reads fail.
+            configs = []
+            logging.warning('Live leverage unavailable; account synchronization continues')
+    value = snapshot(account, rows, configs)
     previous = store.get('live_account', {})
     if previous.get('updated_at'):
         before = {(p['symbol'], p['position_side']): p['amount'] for p in previous.get('positions', [])}

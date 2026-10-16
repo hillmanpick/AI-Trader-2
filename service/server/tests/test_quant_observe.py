@@ -43,6 +43,13 @@ def test_readonly_reads_production_even_with_paper_or_testnet_cfg(cfg):
         network.assert_called_once_with('GET', '/fapi/v3/account', None, True)
 
 
+def test_leverage_configuration_is_a_signed_read_only_request(cfg):
+    api = ReadOnlyBinance(cfg)
+    with patch.object(Binance,'request',return_value=[]) as network:
+        assert api.symbol_config()==[]
+        network.assert_called_once_with('GET','/fapi/v1/symbolConfig',None,True)
+
+
 def test_engine_observation_cannot_initialize_execute_or_change_journal(cfg):
     store = Store(cfg.db_path)
     store.set('positions', {'ETHUSDT': {'amount': 1, 'entry': 100}})
@@ -59,6 +66,49 @@ def test_engine_observation_cannot_initialize_execute_or_change_journal(cfg):
 def row(amount, side='BOTH'):
     return {'symbol':'ETHUSDT', 'positionAmt':str(amount), 'positionSide':side, 'entryPrice':'100',
             'markPrice':'110', 'unRealizedProfit':str(amount*10), 'liquidationPrice':'60', 'notional':str(amount*110)}
+
+
+def test_snapshot_uses_exchange_leverage_without_inferring_from_margin():
+    positions = snapshot({},[row(2,'LONG') | {'leverage':'100'}, row(-1,'SHORT')],
+                         [{'symbol':'ETHUSDT','leverage':20}])['positions']
+    assert [p['leverage'] for p in positions]==[100,20]
+    assert snapshot({},[row(2) | {'positionInitialMargin':'2.2'}])['positions'][0]['leverage'] is None
+
+
+@pytest.mark.parametrize('bad',[None,'',0,-1,1.5,True,'NaN','Infinity','invalid'])
+def test_missing_or_invalid_leverage_is_not_displayed_as_a_real_multiple(bad):
+    position = snapshot({},[row(2) | {'leverage':bad}])['positions'][0]
+    assert position['leverage'] is None
+
+
+def test_collect_batches_leverage_for_all_positions_and_skips_unneeded_reads(cfg):
+    api = MagicMock(last_sync=10**20)
+    api.account.return_value = {}
+    api.positions.return_value = [row(2,'LONG'),row(-1,'SHORT')]
+    api.symbol_config.return_value = [{'symbol':'ETHUSDT','leverage':100}]
+    store = Store(cfg.db_path)
+    value = collect(cfg,store,api)
+    assert [p['leverage'] for p in value['positions']]==[100,100]
+    api.symbol_config.assert_called_once_with()
+    api.symbol_config.reset_mock()
+    api.positions.return_value = [row(2) | {'leverage':'20'}]
+    assert collect(cfg,store,api)['positions'][0]['leverage']==20
+    api.positions.return_value = []
+    assert collect(cfg,store,api)['positions']==[]
+    api.symbol_config.assert_not_called()
+    assert not api.order.called and not api.prepare_account.called
+
+
+@pytest.mark.parametrize('failure',[RuntimeError('unavailable'),None,{'invalid':'response'}])
+def test_optional_leverage_read_failure_preserves_account_snapshot(cfg,failure):
+    api = MagicMock(last_sync=10**20)
+    api.account.return_value = {'totalMarginBalance':'200'}
+    api.positions.return_value = [row(2)]
+    if isinstance(failure,Exception):api.symbol_config.side_effect=failure
+    else:api.symbol_config.return_value=failure
+    value = collect(cfg,Store(cfg.db_path),api)
+    assert value['status']=='ok' and value['account']['equity']==200
+    assert value['positions'][0]['leverage'] is None
 
 
 def test_real_manual_and_hedge_positions_do_not_merge_or_contaminate_paper_journal(cfg):
@@ -158,7 +208,7 @@ def test_advice_can_reuse_realtime_market_client_without_closing_it(cfg):
 def test_account_api_auth_and_resume_cannot_enable_execution(cfg):
     app = FastAPI()
     store = Store(cfg.db_path)
-    store.set('live_account',snapshot({'totalMarginBalance':'100'}, []))
+    store.set('live_account',snapshot({'totalMarginBalance':'100'}, [row(2)], [{'symbol':'ETHUSDT','leverage':50}]))
     with patch('routes_quant.Settings',return_value=cfg):register_quant_routes(app)
     client = TestClient(app)
     assert client.get('/api/quant/live-account').status_code == 401
@@ -166,6 +216,7 @@ def test_account_api_auth_and_resume_cannot_enable_execution(cfg):
     value = client.get('/api/quant/live-account',headers=headers)
     assert value.status_code == 200 and not value.json()['stale']
     assert not value.json()['execution_enabled'] and value.json()['read_only']
+    assert value.json()['positions'][0]['leverage']==50
     assert 'private' not in value.text
     assert client.post('/api/quant/resume',headers=headers).status_code == 409
     assert not client.get('/api/quant/status',headers=headers).json()['config']['execution_enabled']

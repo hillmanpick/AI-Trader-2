@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { beijingTime } from './officialData'
+import { formatLeverage } from './positionFormat'
 
 const fmt = (value: unknown, digits = 2) => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: digits })
 
@@ -34,7 +35,8 @@ export function LiveAccount() {
           {[['钱包余额', account.wallet], ['账户权益', account.equity], ['可用余额', account.available], ['未实现盈亏', account.unrealized], ['已用初始保证金', account.initial_margin], ['维持保证金', account.maintenance_margin]].map(([name, value]) => <div key={name as string}><small style={{ color: 'var(--text-secondary)' }}>{name}</small><div style={{ fontSize: '20px', fontWeight: 600 }}>{fmt(value)} <small>USDT</small></div></div>)}
         </div>
         <p>维持保证金 / 权益：{account.margin_ratio == null ? '—' : `${(account.margin_ratio * 100).toFixed(2)}%`} · 当前持仓 {(data.positions || []).length} 项</p>
-        {data.positions?.length ? <div className="table-container"><table className="table"><thead><tr><th>合约</th><th>持仓方向</th><th>数量</th><th>入场价</th><th>标记价</th><th>浮动盈亏</th><th>强平价</th></tr></thead><tbody>{data.positions.map((p: any) => <tr key={`${p.symbol}-${p.position_side}`}><td>{p.symbol}</td><td>{p.amount > 0 ? '多' : '空'} · {p.position_side}</td><td>{fmt(Math.abs(p.amount), 8)}</td><td>{fmt(p.entry, 6)}</td><td>{fmt(p.mark, 6)}</td><td style={{ color: p.pnl >= 0 ? 'var(--success)' : 'var(--error)' }}>{fmt(p.pnl, 4)} USDT</td><td>{p.liquidation > 0 ? fmt(p.liquidation, 6) : '未提供'}</td></tr>)}</tbody></table></div> : <p>币安实盘账户当前空仓。</p>}
+        {data.positions?.some((p: any) => formatLeverage(p.leverage) === '未提供') && <p>部分仓位的杠杆暂未获取，显示“未提供”。</p>}
+        {data.positions?.length ? <div className="table-container"><table className="table"><thead><tr><th>合约</th><th>持仓方向</th><th>杠杆</th><th>数量</th><th>入场价</th><th>标记价</th><th>浮动盈亏</th><th>强平价</th></tr></thead><tbody>{data.positions.map((p: any) => <tr key={`${p.symbol}-${p.position_side}`}><td>{p.symbol}</td><td>{p.amount > 0 ? '多' : '空'} · {p.position_side}</td><td><strong>{formatLeverage(p.leverage)}</strong></td><td>{fmt(Math.abs(p.amount), 8)}</td><td>{fmt(p.entry, 6)}</td><td>{fmt(p.mark, 6)}</td><td style={{ color: p.pnl >= 0 ? 'var(--success)' : 'var(--error)' }}>{fmt(p.pnl, 4)} USDT</td><td>{p.liquidation > 0 ? fmt(p.liquidation, 6) : '未提供'}</td></tr>)}</tbody></table></div> : <p>币安实盘账户当前空仓。</p>}
       </>}
     </>}
   </section>
