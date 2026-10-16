@@ -38,7 +38,7 @@ def paper_settings(base):
                   boll_deviation=float(os.getenv('QUANT_PAPER_BOLL_DEVIATION', str(base.boll_deviation))),
                   stop_pct=float(os.getenv('QUANT_PAPER_STOP_LOSS_PCT', '0.03')),
                   take_pct=float(os.getenv('QUANT_PAPER_TAKE_PROFIT_PCT', '0.06')),
-                  daily_loss=float(os.getenv('QUANT_PAPER_MAX_DAILY_LOSS_USDT', '500')),
+                  daily_loss=0,
                   paper_cash=float(os.getenv('QUANT_PAPER_BALANCE_USDT', '10000')),
                   poll_seconds=int(os.getenv('QUANT_PAPER_POLL_SECONDS', '15')))
     cfg.validate()

@@ -199,6 +199,15 @@ class Engine:
         if day.get('date') != today:
             day = {'date':today,'equity':equity,'blocked':False}
             self.store.set('risk_day',day)
+        if not self.cfg.daily_loss_enabled:
+            # Preserve the day baseline and journal; remove only obsolete latches.
+            if day.get('blocked'):
+                day['blocked'] = False
+                self.store.set('risk_day',day)
+                self.store.event('规则更新','非实盘不再启用每日亏损熔断，恢复按策略审核开仓；历史盈亏与余额保留')
+            if self.store.get('daily_loss_blocked',False):
+                self.store.set('daily_loss_blocked',False)
+            return False
         if day['equity']-equity >= self.cfg.daily_loss and not day.get('blocked'):
             day['blocked'] = True
             self.store.set('risk_day',day)

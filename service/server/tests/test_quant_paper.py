@@ -36,6 +36,16 @@ def test_simulation_has_separate_journal_and_no_account_keys(setup, monkeypatch)
     with pytest.raises(ValueError, match='separate'):paper_settings(base)
 
 
+@pytest.mark.parametrize('legacy_limit',['500','invalid'])
+def test_paper_ignores_legacy_daily_loss_limit(setup,monkeypatch,legacy_limit):
+    base,_ = setup
+    monkeypatch.setenv('QUANT_PAPER_MAX_DAILY_LOSS_USDT',legacy_limit)
+    cfg = paper_settings(base)
+    assert cfg.daily_loss==0 and not cfg.daily_loss_enabled
+    assert cfg.public()['daily_loss'] is None
+    assert base.daily_loss > 0
+
+
 def test_paper_review_overrides_leave_observer_settings_unchanged(setup, monkeypatch):
     base, _ = setup
     monkeypatch.setenv('QUANT_PAPER_AI_MIN_CONFIDENCE', '0.55')

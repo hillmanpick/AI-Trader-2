@@ -64,6 +64,10 @@ class Settings:
     def mail_ready(self):
         return bool(self.smtp_user and self.smtp_password and self.mail_to)
 
+    @property
+    def daily_loss_enabled(self):
+        return self.mode == 'live'
+
     def validate(self):
         if self.mode not in {'paper', 'testnet', 'live'}:
             raise ValueError('QUANT_MODE must be paper/testnet/live')
@@ -88,9 +92,11 @@ class Settings:
             raise ValueError('Unsupported kline interval')
         if not 1 <= self.fast < self.slow <= 200 or not 2 <= self.boll_period <= 200:
             raise ValueError('Invalid indicator periods')
-        values = [self.order_notional,self.max_notional,self.stop_pct,self.take_pct,self.daily_loss,self.paper_cash,self.fee_rate,self.boll_deviation]
+        values = [self.order_notional,self.max_notional,self.stop_pct,self.take_pct,self.paper_cash,self.fee_rate,self.boll_deviation]
         if any(not math.isfinite(v) or v <= 0 for v in values):
             raise ValueError('Risk settings must be finite and positive')
+        if not math.isfinite(self.daily_loss) or self.daily_loss < 0 or (self.daily_loss_enabled and self.daily_loss == 0):
+            raise ValueError('Live daily loss limit must be finite and positive')
         if not 0 < self.stop_pct < 0.5 or not 0 < self.take_pct < 1 or not 1 <= self.leverage <= (100 if self.mode == 'paper' else 20):
             raise ValueError('Invalid stop/take/leverage')
         if not math.isfinite(self.paper_maintenance_rate) or not 0 < self.paper_maintenance_rate < 1/self.leverage:
@@ -131,6 +137,8 @@ class Settings:
             'ai_review_max_age_seconds': self.ai_review_max_age,
             'ai_review_profile': 'paper_relaxed' if self.mode == 'paper' and self.paper_review_relaxed else 'standard',
             'execution_enabled': self.enabled and not self.observation_only and (self.mode != 'live' or self.live_enabled),
+            'daily_loss_enabled': self.daily_loss_enabled,
+            'daily_loss': self.daily_loss if self.daily_loss_enabled else None,
             'quiet_hours': 'UTC+8 00:00–08:00',
             'report_hours': '08,10,12,14,16,18,20,22',
         }

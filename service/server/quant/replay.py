@@ -84,7 +84,7 @@ def replay(data,cfg,enforce=False):
         day=datetime.fromtimestamp(stamp/1000,timezone(timedelta(hours=8))).date()
         if day != risk_day:
             risk_day=day;day_equity=equity(opens);daily_block=False
-        daily_block=daily_block or day_equity-equity(opens)>=cfg.daily_loss
+        daily_block=cfg.daily_loss_enabled and (daily_block or day_equity-equity(opens)>=cfg.daily_loss)
         for s in symbols:
             action=pending.get(s)
             if action=='close' and s in positions:
@@ -132,7 +132,7 @@ def replay(data,cfg,enforce=False):
                 pending[s]='close'
         net_equity=equity(closes)
         peak=max(peak,net_equity);drawdown=max(drawdown,peak-net_equity)
-        daily_block=daily_block or day_equity-net_equity>=cfg.daily_loss
+        daily_block=cfg.daily_loss_enabled and (daily_block or day_equity-net_equity>=cfg.daily_loss)
         for s in symbols:
             if pending.get(s)=='close':continue
             history=data[s][max(0,i-239):i+1]
@@ -161,7 +161,7 @@ def main():
     cfg=replace(Settings(),symbols=tuple(symbols),mode='paper',strategy='adaptive',interval='1m',fast=3,slow=10,
                 leverage=100,paper_margin=2000,paper_max_margin=6000,order_notional=200000,max_notional=600000,
                 max_positions=3,paper_dynamic_exits=True,paper_slippage=.0003,boll_deviation=1.5,
-                daily_loss=500,paper_cash=10000,fee_rate=.0005,poll_seconds=5,db_path='/tmp/quant-replay.db')
+                daily_loss=0,paper_cash=10000,fee_rate=.0005,poll_seconds=5,db_path='/tmp/quant-replay.db')
     cfg.validate()
     split=min(map(len,data.values()))//2
     report={'method':'fixed-rule chronological comparison; no parameter fitting',

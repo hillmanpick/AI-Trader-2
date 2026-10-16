@@ -1,6 +1,6 @@
 import json
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -146,6 +146,8 @@ def test_paper_open_and_close_pnl_fees(cfg):
 
 
 def test_daily_loss_prevents_entry_but_allows_close(cfg):
+    from dataclasses import replace
+    cfg = replace(cfg,mode='live',daily_loss=20)
     store,api = Store(cfg.db_path),MagicMock()
     store.set('account',{'equity':1000,'available':1000})
     engine = Engine(cfg,store,api)
@@ -155,9 +157,56 @@ def test_daily_loss_prevents_entry_but_allows_close(cfg):
     api.quantity.assert_not_called()
     assert engine.daily_blocked(1100)  # breach latches until next local day
     store.set('positions',{'BTCUSDT':{'amount':0.001,'entry':60000,'mark':60000}})
-    store.set('paper_balance',1000)
+    engine.live_order = MagicMock()
+    engine.ensure_protection = MagicMock()
     engine.execute('BTCUSDT','close',60000,'close','2')
-    assert store.get('positions')=={}
+    engine.live_order.assert_called_once_with('BTCUSDT',-0.001,'close','2')
+    next_day = datetime.fromisoformat(store.get('risk_day')['date'])+timedelta(days=1)
+    with patch('quant.engine.local_time',return_value=next_day):
+        assert not engine.daily_blocked(970)
+
+
+@pytest.mark.parametrize('mode',['paper','testnet'])
+def test_non_live_daily_loss_clears_old_latch_without_resetting_ledger(cfg,mode):
+    from dataclasses import replace
+    cfg = replace(cfg,mode=mode,enabled=True,daily_loss=20)
+    store,api = Store(cfg.db_path),MagicMock()
+    today = datetime(2026,10,16,tzinfo=timezone.utc)
+    store.set('risk_day',{'date':'2026-10-16','equity':1000,'blocked':True})
+    store.set('daily_loss_blocked',True)
+    store.set('paper_balance',100)
+    store.set('account',{'equity':100,'available':100})
+    store.event('历史','preserved')
+    engine = Engine(cfg,store,api)
+    with patch('quant.engine.local_time',return_value=today):
+        assert not engine.daily_blocked(100)
+        assert not engine.daily_blocked(-1000)
+        assert store.get('risk_day')=={'date':'2026-10-16','equity':1000,'blocked':False}
+        assert store.get('daily_loss_blocked') is False
+        assert store.get('paper_balance')==100
+        assert any(e['body']=='preserved' for e in store.events())
+        assert len([e for e in store.events() if e['kind']=='规则更新'])==1
+        api.quantity.return_value='0.001'
+        if mode == 'testnet':
+            engine.live_order = MagicMock()
+        engine.execute('BTCUSDT','long',60000,'test','after-loss')
+    if mode == 'paper':
+        assert len(store.orders())==1
+        assert store.get('positions')['BTCUSDT']['amount']==0.001
+    else:
+        engine.live_order.assert_called_once_with('BTCUSDT',0.001,'test','after-loss')
+
+
+@pytest.mark.parametrize('limit',[0,-1,float('nan'),float('inf')])
+def test_live_daily_loss_limit_must_remain_positive(cfg,limit):
+    from dataclasses import replace
+    with pytest.raises(ValueError,match='Live daily loss'):
+        replace(cfg,mode='live',daily_loss=limit).validate()
+    paper = replace(cfg,daily_loss=0)
+    paper.validate()
+    assert paper.public()['daily_loss'] is None
+    assert not paper.public()['daily_loss_enabled']
+    assert replace(cfg,mode='live').public()['daily_loss_enabled']
 
 
 def test_private_api_denies_and_pause_is_persistent(tmp_path,monkeypatch):
