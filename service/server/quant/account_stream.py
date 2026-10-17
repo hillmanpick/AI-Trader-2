@@ -4,6 +4,7 @@ import json
 import logging
 import threading
 import time
+from datetime import datetime, timezone
 
 import aiohttp
 
@@ -23,6 +24,7 @@ class AccountStream:
         self._listen_key = None
         self._last_rest_sync = 0.0
         self._last_event = 0.0
+        self._last_event_at = None
         self._state = {'status': 'starting', 'source': 'Binance private User Data WebSocket', 'reconnects': 0}
 
     def start(self):
@@ -97,7 +99,9 @@ class AccountStream:
                         keepalive = asyncio.create_task(self._keepalive(listen_key))
                         try:
                             while not self._stop.is_set():
-                                message = await asyncio.wait_for(ws.receive(), timeout=35)
+                                # ACCOUNT_UPDATE is emitted only after an account change.
+                                # aiohttp heartbeat handles idle connections; an idle account is healthy.
+                                message = await ws.receive()
                                 if message.type == aiohttp.WSMsgType.TEXT:
                                     self._message(message.data)
                                 elif message.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
@@ -167,6 +171,7 @@ class AccountStream:
                     else:
                         self._positions.pop(key, None)
                 self._last_event = time.monotonic()
+                self._last_event_at = datetime.now(timezone.utc).isoformat()
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             logging.debug('Ignored malformed Binance account event')
 
@@ -174,6 +179,6 @@ class AccountStream:
         with self._lock:
             return dict(self._state) | {
                 'seeded': self._seeded,
-                'last_event_at_monotonic': self._last_event or None,
+                'last_event_at': self._last_event_at,
                 'rest_reconcile_seconds': 300,
             }

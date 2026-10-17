@@ -62,6 +62,7 @@ def test_account_stream_consumes_account_update_without_order_methods(cfg):
     account, rows = stream.snapshot()
     assert account['totalWalletBalance']=='125' and account['assets'][0]['availableBalance']=='120'
     assert rows[0]['symbol']=='BTCUSDT' and rows[0]['positionAmt']=='0.01'
+    assert stream.snapshot_status()['last_event_at']
     stream._message(json.dumps({'e':'ACCOUNT_UPDATE','a':{'P':[{'s':'BTCUSDT','ps':'BOTH','pa':'0'}]}}))
     assert stream.snapshot()[1] == []
     assert not exchange.order.called and not exchange.prepare_account.called
