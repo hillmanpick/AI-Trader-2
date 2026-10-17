@@ -30,6 +30,7 @@ export function LiveAccount() {
       {!data.observer_enabled && <p>只读观察进程尚未启用。</p>}
       {data.stale && <p role="status" style={{ color: '#edac65' }}>实盘数据尚未同步或已超过 90 秒；以下若有余额和仓位，为上次成功快照。</p>}
       <small>最后成功同步：{beijingTime(data.updated_at)}（UTC+8）</small>
+      <p>账户通道：{data.account_stream?.status === 'connected' ? 'WebSocket 实时账户同步' : data.account_stream?.status === 'reconnecting' ? '账户 WebSocket 重连中，REST 校准中' : data.account_stream?.status === 'stopped' ? '账户 WebSocket 已停止，REST 校准中' : '账户 WebSocket 正在启动，REST 校准可用'}</p>
       {account && <>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '14px', margin: '20px 0' }}>
           {[['钱包余额', account.wallet], ['账户权益', account.equity], ['可用余额', account.available], ['未实现盈亏', account.unrealized], ['已用初始保证金', account.initial_margin], ['维持保证金', account.maintenance_margin]].map(([name, value]) => <div key={name as string}><small style={{ color: 'var(--text-secondary)' }}>{name}</small><div style={{ fontSize: '20px', fontWeight: 600 }}>{fmt(value)} <small>USDT</small></div></div>)}

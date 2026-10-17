@@ -13,6 +13,7 @@ from quant.ai_review import DeepSeekAdvisor
 from quant.binance import Binance
 from quant.engine import Engine
 from quant.observe import ReadOnlyBinance, advice, collect, snapshot
+from quant.account_stream import AccountStream
 from quant.settings import Settings
 from quant.store import Store, utcnow
 from routes_quant import register_quant_routes
@@ -48,6 +49,29 @@ def test_leverage_configuration_is_a_signed_read_only_request(cfg):
     with patch.object(Binance,'request',return_value=[]) as network:
         assert api.symbol_config()==[]
         network.assert_called_once_with('GET','/fapi/v1/symbolConfig',None,True)
+
+
+def test_account_stream_consumes_account_update_without_order_methods(cfg):
+    exchange = MagicMock()
+    stream = AccountStream(exchange)
+    stream.seed({'totalWalletBalance':'100','assets':[{'asset':'USDT','walletBalance':'100'}]}, [])
+    stream._message(json.dumps({'e':'ACCOUNT_UPDATE','a':{
+        'B':[{'a':'USDT','wb':'125','cw':'120'}],
+        'P':[{'s':'BTCUSDT','ps':'BOTH','pa':'0.01','ep':'60000','up':'12.5','iw':'200'}],
+    }}))
+    account, rows = stream.snapshot()
+    assert account['totalWalletBalance']=='125' and account['assets'][0]['availableBalance']=='120'
+    assert rows[0]['symbol']=='BTCUSDT' and rows[0]['positionAmt']=='0.01'
+    stream._message(json.dumps({'e':'ACCOUNT_UPDATE','a':{'P':[{'s':'BTCUSDT','ps':'BOTH','pa':'0'}]}}))
+    assert stream.snapshot()[1] == []
+    assert not exchange.order.called and not exchange.prepare_account.called
+
+
+def test_account_stream_expiry_is_reported(cfg):
+    stream = AccountStream(MagicMock())
+    stream.seed({}, [])
+    with pytest.raises(RuntimeError, match='expired'):
+        stream._message(json.dumps({'e':'listenKeyExpired'}))
 
 
 def test_engine_observation_cannot_initialize_execute_or_change_journal(cfg):

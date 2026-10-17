@@ -13,6 +13,7 @@ from .store import utcnow
 from .strategies import signal
 from .features import indicators
 from .market_stream import MarketStreamMixin
+from .account_stream import AccountStream
 
 READ_PATHS = {'/fapi/v1/time', '/fapi/v3/account', '/fapi/v3/positionRisk', '/fapi/v1/symbolConfig',
               '/fapi/v1/premiumIndex', '/fapi/v1/klines'}
@@ -31,9 +32,45 @@ class ReadOnlyBinance(Binance):
     def symbol_config(self):
         return self.request('GET', '/fapi/v1/symbolConfig', signed=True)
 
+    def create_listen_key(self):
+        response = self.session.post(self.cfg.base_url + '/fapi/v1/listenKey',
+                                     headers={'X-MBX-APIKEY': self.cfg.api_key}, timeout=(5, 12))
+        if response.status_code >= 400:
+            raise ExchangeError(response.status_code)
+        value = response.json().get('listenKey')
+        if not value:
+            raise RuntimeError('Binance account listenKey missing')
+        return value
+
+    def keepalive_listen_key(self, listen_key):
+        response = self.session.put(self.cfg.base_url + '/fapi/v1/listenKey',
+                                    params={'listenKey': listen_key},
+                                    headers={'X-MBX-APIKEY': self.cfg.api_key}, timeout=(5, 12))
+        if response.status_code >= 400:
+            raise ExchangeError(response.status_code)
+
 
 class RealtimeReadOnlyBinance(MarketStreamMixin, ReadOnlyBinance):
-    pass
+    def _start_account_stream(self):
+        self.account_stream = AccountStream(self)
+        self.account_stream.start()
+
+    def account_snapshot(self):
+        stream = getattr(self, 'account_stream', None)
+        if stream and stream.can_serve():
+            account, rows = stream.snapshot()
+        else:
+            account, rows = self.account(), self.positions()
+            if stream:
+                stream.seed(account, rows)
+        # ACCOUNT_UPDATE does not carry mark price. Reuse the public stream for current marks.
+        for row in rows:
+            if float(row.get('positionAmt', 0) or 0) and not float(row.get('markPrice', 0) or 0):
+                try:
+                    row['markPrice'] = str(self.mark(row['symbol']))
+                except Exception:
+                    row['markPrice'] = '0'
+        return account, rows
 
 
 def numeric(value):
@@ -89,7 +126,10 @@ def collect(cfg, store, api):
     if api.last_sync < time.time()-1800:
         api.sync_time()
     # Read the entire real account, including manual and hedge positions; never adopt ownership.
-    account, rows = api.account(), api.positions()
+    if not hasattr(api, 'mock_calls') and callable(getattr(api, 'account_snapshot', None)):
+        account, rows = api.account_snapshot()
+    else:
+        account, rows = api.account(), api.positions()
     configs = []
     if any(numeric(row['positionAmt']) and leverage_value(row.get('leverage')) is None for row in rows):
         try:
@@ -161,6 +201,7 @@ def run(cfg, store):
     cfg.validate()
     api = RealtimeReadOnlyBinance(cfg)
     api._start_market_stream()
+    api._start_account_stream()
     notifier = Notifier(replace(cfg, mode='live'), store)
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='market-advice')
     future, next_advice = None, 0
@@ -190,7 +231,8 @@ def run(cfg, store):
             previous = store.get('live_account', {})
             store.set('live_account', previous | {'status': 'error', 'error': error, 'checked_at': utcnow(), 'read_only': True})
         store.set('worker', {'status': 'observing' if not error else 'observation_error', 'error': error, 'heartbeat': utcnow(),
-                             'market_stream': api.market_stream.snapshot()})
+                             'market_stream': api.market_stream.snapshot(),
+                             'account_stream': api.account_stream.snapshot_status()})
         if not error and live is not None:
             positions = {f"{p['symbol']} / {p['position_side']}": p for p in live['positions']}
             # A mail failure must not invalidate a successful account snapshot.

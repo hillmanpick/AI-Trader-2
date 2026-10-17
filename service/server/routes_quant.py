@@ -59,8 +59,11 @@ def register_quant_routes(app):
     @app.get('/api/quant/live-account')
     def live_account(x_quant_token: str = Header(None)):
         authorized(x_quant_token)
-        snapshot = journal().get('live_account', {})
+        db = journal()
+        snapshot = db.get('live_account', {})
+        worker = db.get('worker', {})
         return snapshot | {'read_only':True, 'execution_enabled':False, 'stale':age_seconds(snapshot.get('updated_at')) > 90,
+                           'account_stream':worker.get('account_stream', {'status':'not_started'}),
                            'credentials_configured':bool(cfg.api_key and cfg.api_secret),
                            'observer_enabled':cfg.observation_only}
 
