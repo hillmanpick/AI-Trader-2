@@ -80,11 +80,31 @@ class LabStore:
             n, start, end = c.execute('SELECT COUNT(*),MIN(ts),MAX(ts) FROM samples').fetchone()
             report = c.execute('SELECT report FROM reports ORDER BY id DESC LIMIT 1').fetchone()
             labels = c.execute('SELECT COUNT(*),COALESCE(SUM(valid),0),MIN(ts),MAX(ts) FROM event_labels').fetchone()
+            clean_rows = c.execute('''SELECT s.ts,s.meta,l.body
+                FROM samples s JOIN event_labels l ON s.symbol=l.symbol AND s.ts=l.ts
+                WHERE l.valid=1 ORDER BY s.ts''').fetchall()
+        from .event_labels import LABEL_SCHEMA
+        from .lab_features import SCHEMA
+        clean_times = []
+        for ts,meta,body in clean_rows:
+            try:
+                meta, label = json.loads(meta), json.loads(body)
+            except (TypeError,ValueError,json.JSONDecodeError):
+                continue
+            # Keep this gate identical to labeled_rows; schema and label
+            # versions must match before a row is counted as model evidence.
+            if meta.get('schema') == SCHEMA and label.get('schema') == LABEL_SCHEMA:
+                clean_times.append(ts)
+        clean_start = min(clean_times) if clean_times else None
+        clean_end = max(clean_times) if clean_times else None
         return {'samples': n, 'start_ms': start, 'end_ms': end,
                 'days': (end-start)/86400000 if start is not None and end is not None else 0,
                 'latest_report': json.loads(report[0]) if report else None,
                 'event_labels':{'total':labels[0],'valid':labels[1],
-                                'invalid':labels[0]-labels[1],'start_ms':labels[2],'end_ms':labels[3]}}
+                                'invalid':labels[0]-labels[1],'start_ms':labels[2],'end_ms':labels[3]},
+                'clean_training':{'samples':len(clean_times),'start_ms':clean_start,'end_ms':clean_end,
+                                  'days':(clean_end-clean_start)/86400000 if clean_start is not None else 0,
+                                  'schema':SCHEMA,'label_schema':LABEL_SCHEMA}}
 
     def append_labels(self, labels):
         with self.connect() as c:

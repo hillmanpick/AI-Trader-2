@@ -111,8 +111,10 @@ def passes(report):
 def train(cfg, gradient=False):
     store = LabStore(cfg.directory)
     stats = store.stats()
+    clean = stats.get('clean_training', {})
     if stats['samples'] < cfg.min_samples or stats['days'] < cfg.min_days:
         report = {'status':'insufficient_data','samples':stats['samples'],'days':stats['days'],
+                  'clean_samples':clean.get('samples',0),'clean_days':clean.get('days',0),
                   'required_samples':cfg.min_samples,'required_days':cfg.min_days,'at_ms':int(time.time()*1000)}
         store.report(report)
         return report

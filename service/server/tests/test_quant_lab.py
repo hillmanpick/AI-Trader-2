@@ -121,6 +121,20 @@ def test_history_survives_and_training_refuses_insufficient_evidence(tmp_path):
     assert not (tmp_path/'model.json').exists()
 
 
+def test_stats_separates_clean_training_schema_from_raw_samples(tmp_path):
+    db = LabStore(str(tmp_path))
+    samples = [row(i * 30000, price=100 + i * .01) for i in range(8)]
+    legacy = samples[-1] | {'meta': samples[-1]['meta'] | {'schema': 'microstructure-v2'}}
+    db.append(samples[:-1] + [legacy])
+    from quant.event_labels import LABEL_SCHEMA
+    labels = label_rows(samples[:-1], 60000)
+    db.append_labels([r | {'valid': True, 'schema': LABEL_SCHEMA} for r in labels])
+    stats = db.stats()
+    assert stats['samples'] == 8
+    assert stats['clean_training']['samples'] == len(labels)
+    assert stats['clean_training']['schema'] == SCHEMA
+
+
 def test_full_training_exports_auditable_artifact_with_three_purged_folds(tmp_path):
     cfg = LabConfig(directory=str(tmp_path),min_samples=1000,min_days=1)
     start = int(time.time()*1000)-2*86400000

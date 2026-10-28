@@ -20,7 +20,7 @@ export function QuantLab() {
     const timer = setInterval(load, 5000)
     return () => { active = false; clearInterval(timer) }
   }, [])
-  const c = data?.collector || {}, h = data?.history || {}, m = data?.model || {}, req = data?.requirements || {}
+  const c = data?.collector || {}, h = data?.history || {}, clean = h.clean_training || {}, m = data?.model || {}, req = data?.requirements || {}
   const reports = h.latest_report
   const eventHistory = data?.event_history || {}, ranking = data?.ranking?.rows || []
   return <section className="card" style={{ padding: 22, marginBottom: 22, lineHeight: 1.8 }}>
@@ -33,7 +33,7 @@ export function QuantLab() {
       <p>全市场逐笔：{c.all_market_trades ? '已启用' : '候选采集'} · 已观察 {num(c.trade_symbols_seen, 0)} 个币 · 订阅分片 {Object.keys(c.trade_shards || {}).length} 个 · 事件排队 {num(c.event_queue, 0)} 条 · Parquet 保存 {num(eventHistory.rows, 0)} 条 / {num((eventHistory.bytes || 0) / 1024 / 1024)} MB</p>
       <p>全市场订单流排序就绪 {num(c.ranked_ready, 0)} 个币；未预热币种不会被标为有效预测。</p>
       {ranking.length > 0 && <details><summary>全市场排序前 20 名</summary><div className="table-container"><table className="table"><thead><tr><th>合约</th><th>状态</th><th>倾向</th><th>分数</th></tr></thead><tbody>{ranking.slice(0, 20).map((r: any) => <tr key={r.symbol}><td>{r.symbol}</td><td>{r.ready ? '订单流就绪' : '等待数据'}</td><td>{r.bias === 'long' ? '偏多' : r.bias === 'short' ? '偏空' : '—'}</td><td>{num(r.score, 4)}</td></tr>)}</tbody></table></div></details>}
-      <p>有效特征 {num(h.samples, 0)} 条 · 覆盖 {num(h.days)} 天 · 每 {req.sample_seconds} 秒保存 · 历史保留 {req.retention_days} 天。训练至少需要 {num(req.min_samples, 0)} 条和 {req.min_days} 天；满足数量后仍须通过样本外回放。</p>
+      <p>原始特征 {num(h.samples, 0)} 条；可训练特征 {num(clean.samples, 0)} 条 · 可训练覆盖 {num(clean.days)} 天 · 每 {req.sample_seconds} 秒保存 · 历史保留 {req.retention_days} 天。训练至少需要 {num(req.min_samples, 0)} 条有效样本和 {req.min_days} 天；满足数量后仍须通过样本外回放。</p>
       <p>逐笔路径标签：有效 {num(h.event_labels?.valid, 0)} 条，缺口或过期无效 {num(h.event_labels?.invalid, 0)} 条。首次触及上下价格障碍决定方向，到期后的价格不会改变标签；完整观察结束后才可用于训练。</p>
       <p><strong>模型：{m.ready ? '历史验证通过，可供模拟使用' : '尚未就绪，禁止模型新仓'}</strong> · {m.reason} · 版本 {m.version || '—'} · 最近训练 {m.trained_ms ? beijingTime(new Date(m.trained_ms).toISOString()) : '—'}</p>
       {reports && <p>最近训练结果：{{ insufficient_data: '等待更多数据', insufficient_clean_labels: '有效逐笔标签不足', insufficient_event_holdout: '独立事件验证时段不足', rejected: '未通过样本外门槛', approved: '历史验证通过' }[reports.status as string] || reports.status} · {reports.at_ms ? beijingTime(new Date(reports.at_ms).toISOString()) : '—'}</p>}
