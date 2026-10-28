@@ -183,3 +183,11 @@ SQLite WAL 将撮合检查点与账本放在同一事务，避免 Redis 重启�
 当前有效 v3 样本 6,491 条、覆盖约 0.248 天，模型仍 `ready=false`。EventLake 约 6,930 万条、12,978 个分段、2.65GB，位于 6GiB 预算内；历史 gap catalog 有 587 个 unresolved 成交区间及 383 个 unresolved 深度区间。服务器没有配置只读 Binance 历史成交 API Key，因而旧/较大成交区间不能用最近 1,000 笔公共接口精确补齐；代码按精确起始 ID 校验并把失败保留为 unresolved，不能把 REST 修档后的事件用于实时特征或标签。生产 ClickHouse URL 也未配置，12,978 个当前保留分段均待导出。用户需要提供只读历史数据 Key 和 ClickHouse 服务地址/凭据，才可完成对应外部数据补齐/导出验收。
 
 模拟动态杠杆当前配置：单仓保证金 2,000 USDT、总上限 6,000 USDT、BTC/ETH 杠杆上限 100x、其他币 20x，杠杆还受止损风险预算和盘口容量约束。线上模拟仍暂停空仓，实盘只读。候选重新入池后强制预热会短暂降低候选特征可用数，但比沿用陈旧历史或把池外时间当作源 feed 丢帧更符合因果性；流动性更高的持续候选仍照常处理。
+
+## 2026-10-29 当前运行复核
+
+部署后继续观察到全市场 522 个 USDT 永续、5 个逐笔 WebSocket 分片、522/522 币种有持久化成交；当前候选 12/12 个特征就绪，Redis 正常，最近采集状态为 `errors=0/reconnects=0/depth_gaps=0`，候选路径成交缺口计数保持 4。有效 v3 样本 6,698 条、覆盖约 0.262 天；三重障碍标签 9,260 条，其中 8,124 条有效；模型仍因未达到 10,000 条、7 天和独立事件验证门槛而 `ready=false`。事件库约 7,139 万条、13,504 个 Parquet 分段、2.74GB；ClickHouse 未配置，全部当前分段仍待导出。
+
+对当前动态候选集合 `BNBUSDT,BTCUSDT,DOGEUSDT,DOTUSDT,ETHUSDT,HBARUSDT,NEARUSDT,SUIUSDT,TRXUSDT,UNIUSDT,WLDUSDT,XAUTUSDT` 做最近 900 秒有界严格窗口搜索，4 个候选全部拒绝：窗口内出现采集器重启产生的 `depthStatus disconnected/connected` 控制证据；其中一个候选还包含 1 个深度序号缺口，另一个包含 4 个。报告 `/home/ai-trader-quant/deploy/data/lab/strict-window-search-current.json` 保留了每个候选的控制事件和诊断。该失败是当前数据质量的真实结果，不能用重连前深度、过滤控制事件或删币修复；待新的连续窗口形成后再复核。
+
+模拟账本仍暂停、空仓，钱包约 979,758.52 USDT；实盘账户 WebSocket 只读连接正常，执行开关关闭。服务器未配置 Binance 历史成交只读 Key 和生产 ClickHouse 地址，因此历史 unresolved 区间与外部导出仍是待完成项。
