@@ -48,7 +48,7 @@ def main():
           {"errors": collector.get("errors"), "raw_dropped": collector.get("raw_dropped")})
     blocked = collector.get("blocked") or {}
     transient = tuple(("Feature warmup", "Event OFI needs", "warming after reconnect",
-                       "stale, missing or warming"))
+                       "stale, missing or warming", "Spread above limit"))
     hard_blocked = {symbol: reason for symbol, reason in blocked.items()
                     if not any(marker.lower() in str(reason).lower() for marker in transient)}
     check(report, bool(ready) and not int(collector.get("depth_gap_active") or 0)
