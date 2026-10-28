@@ -10,5 +10,7 @@ python-multipart>=0.0.6
 openrouter>=1.0.0
 psycopg[binary]>=3.2.1
 redis>=5.0.8
+scikit-learn>=1.5.2,<2
+pyarrow>=18.1,<24
 pytest>=8.0.0
 yfinance>=0.2.30

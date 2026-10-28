@@ -97,6 +97,63 @@ def volatility_plan(bars, price, leverage, maintenance_rate):
     return {'atr':atr,'stop_pct':stop,'take_pct':take,'regime':market_regime([float(r[4]) for r in bars])}
 
 
+def dynamic_leverage_plan(bars, price, margin, fee_rate, slippage,
+                          min_leverage, max_leverage, risk_fraction,
+                          maintenance_rate, risk_buffer=.001,
+                          notional_cap=float('inf'), remaining_risk=float('inf'), volatility_override=None):
+    """Choose bounded leverage from ATR stop distance and a margin risk budget."""
+    if volatility_override is not None:
+        plan = dict(volatility_override)
+        if any(not math.isfinite(plan[k]) or plan[k] <= 0 for k in ('atr','stop_pct','take_pct')):
+            raise ValueError('Invalid model volatility plan')
+    else:
+        plan = volatility_plan(bars, price, 1, maintenance_rate)
+        plan['stop_pct'] = max(1.5*plan['atr']/price, .0008)
+        plan['take_pct'] = max(3*plan['atr']/price, .0026)
+    return size_risk_plan(plan,margin,fee_rate,slippage,min_leverage,max_leverage,
+                          risk_fraction,maintenance_rate,risk_buffer,notional_cap,remaining_risk)
+
+
+def size_risk_plan(plan,margin,fee_rate,slippage,min_leverage,max_leverage,
+                   risk_fraction,maintenance_rate,risk_buffer=.001,
+                   notional_cap=float('inf'),remaining_risk=float('inf')):
+    """Identical numerical risk sizing for event replay and paper execution."""
+    if (not math.isfinite(margin) or margin <= 0
+            or not 1 <= min_leverage <= max_leverage <= 100
+            or not math.isfinite(risk_fraction) or not 0 < risk_fraction <= 1
+            or any(not math.isfinite(v) or v < 0 for v in (fee_rate,slippage,risk_buffer))
+            or math.isnan(notional_cap) or math.isnan(remaining_risk)
+            or notional_cap <= 0 or remaining_risk <= 0):
+        raise ValueError('Invalid dynamic leverage inputs')
+    if plan['stop_pct'] >= .5:
+        raise ValueError('Volatility too high for a supported risk plan')
+    round_trip_cost = 2 * (fee_rate + slippage)
+    risk_budget = min(margin * risk_fraction, remaining_risk)
+    risk_per_notional = plan['stop_pct'] + round_trip_cost + risk_buffer
+    target_notional = min(risk_budget / risk_per_notional, notional_cap)
+    leverage = min(max_leverage, int(math.floor(target_notional / margin)))
+    while leverage >= min_leverage:
+        liquidation_room = (1/leverage-maintenance_rate)*.5
+        if risk_per_notional < liquidation_room:
+            break
+        leverage -= 1
+    if leverage < min_leverage:
+        raise ValueError('Risk or liquidity budget cannot support minimum leverage')
+    notional = margin * leverage
+    return plan | {
+        'leverage': leverage,
+        'margin': margin,
+        'notional': notional,
+        'risk_budget': risk_budget,
+        'estimated_stop_loss': notional * plan['stop_pct'],
+        'estimated_round_trip_cost': notional * round_trip_cost,
+        'risk_buffer': risk_buffer,
+        'planned_risk_usdt': notional * risk_per_notional,
+        'liquidation_room_pct': (1/leverage-maintenance_rate)*.5,
+        'sizing_method': 'atr_stop_risk_budget',
+    }
+
+
 def update_dynamic_exit(position, plan, fee_rate, slippage):
     """Stops only tighten; targets follow the last closed candle's ATR."""
     long = position['amount'] > 0

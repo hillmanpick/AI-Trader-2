@@ -141,5 +141,6 @@ change.md
 /deploy/tls/
 /deploy/data/
 /deploy/postgres-data/
+/outputs/
 /work/
 service/server/work/

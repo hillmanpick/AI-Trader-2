@@ -49,7 +49,20 @@ class Settings:
     paper_max_margin: float = 0
     paper_maintenance_rate: float = .005
     paper_dynamic_exits: bool = False
+    paper_dynamic_leverage: bool = False
+    paper_min_leverage: int = 2
+    paper_max_leverage: int = 20
+    paper_risk_fraction: float = .10
+    paper_risk_buffer: float = .001
+    paper_depth_participation: float = .05
+    paper_max_spread_bps: float = 10
+    paper_depth_range_bps: float = 10
     paper_entry_filter: str = 'shadow'
+    paper_lab_required: bool = False
+    reflection_enabled: bool = field(default_factory=lambda: os.getenv('QUANT_REFLECTION_ENABLED', 'false').lower() == 'true')
+    reflection_min_trades: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_MIN_TRADES', '12')))
+    reflection_window: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_WINDOW', '50')))
+    reflection_interval_trades: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_INTERVAL_TRADES', '10')))
     smtp_host: str = 'smtp.qq.com'
     smtp_port: int = 465
     smtp_user: str = field(default_factory=lambda: os.getenv('QQ_SMTP_USER', ''))
@@ -71,19 +84,25 @@ class Settings:
     def validate(self):
         if self.mode not in {'paper', 'testnet', 'live'}:
             raise ValueError('QUANT_MODE must be paper/testnet/live')
-        if self.strategy not in {'sma_cross', 'bollinger', 'adaptive'}:
+        if self.strategy not in {'sma_cross', 'bollinger', 'adaptive', 'lab_model'}:
             raise ValueError('Unknown strategy')
         if self.strategy == 'adaptive' and self.mode != 'paper':
             raise ValueError('Adaptive strategy is paper-only')
+        if self.strategy == 'lab_model' and (self.mode != 'paper' or not self.paper_lab_required or not self.paper_dynamic_leverage):
+            raise ValueError('Lab model requires isolated paper mode, readiness gate and dynamic leverage')
+        if self.paper_lab_required and self.mode != 'paper':
+            raise ValueError('Lab execution is paper-only')
         if self.paper_entry_filter not in {'shadow','enforce'}:
             raise ValueError('Paper entry filter must be shadow/enforce')
+        if self.reflection_min_trades < 5 or self.reflection_window < self.reflection_min_trades or self.reflection_interval_trades < 1:
+            raise ValueError('Invalid strategy reflection limits')
         if not math.isfinite(self.paper_slippage) or not 0 <= self.paper_slippage <= .01:
             raise ValueError('Invalid paper slippage')
         if any(not math.isfinite(v) or v < 0 for v in (self.paper_margin,self.paper_max_margin)):
             raise ValueError('Invalid paper margin')
         if bool(self.paper_margin) != bool(self.paper_max_margin) or self.paper_margin > self.paper_max_margin:
             raise ValueError('Invalid paper margin limits')
-        if self.paper_margin and (not math.isclose(self.order_notional,self.paper_margin*self.leverage)
+        if self.paper_margin and not self.paper_dynamic_leverage and (not math.isclose(self.order_notional,self.paper_margin*self.leverage)
                                   or not math.isclose(self.max_notional,self.paper_max_margin*self.leverage)):
             raise ValueError('Paper margin and notional disagree')
         if not self.symbols or len(set(self.symbols)) != len(self.symbols) or any(not s.isalnum() or not s.endswith('USDT') for s in self.symbols):
@@ -101,6 +120,21 @@ class Settings:
             raise ValueError('Invalid stop/take/leverage')
         if not math.isfinite(self.paper_maintenance_rate) or not 0 < self.paper_maintenance_rate < 1/self.leverage:
             raise ValueError('Invalid simulated maintenance margin')
+        if (type(self.paper_min_leverage) is not int or type(self.paper_max_leverage) is not int
+                or not 1 <= self.paper_min_leverage <= self.paper_max_leverage <= 100
+                or not math.isfinite(self.paper_risk_fraction)
+                or not 0 < self.paper_risk_fraction <= 1):
+            raise ValueError('Invalid dynamic leverage limits')
+        if (not math.isfinite(self.paper_risk_buffer) or not 0 <= self.paper_risk_buffer <= .05
+                or not math.isfinite(self.paper_depth_participation) or not 0 < self.paper_depth_participation <= 1
+                or any(not math.isfinite(v) or not 0 < v <= 100
+                       for v in (self.paper_max_spread_bps,self.paper_depth_range_bps))):
+            raise ValueError('Invalid dynamic leverage liquidity limits')
+        if self.paper_dynamic_leverage:
+            if self.mode != 'paper' or not self.paper_margin or not self.paper_dynamic_exits:
+                raise ValueError('Dynamic leverage requires paper mode, reserved margin and dynamic exits')
+            if self.leverage != self.paper_max_leverage or self.paper_maintenance_rate >= 1/self.paper_max_leverage:
+                raise ValueError('Dynamic leverage cap and maintenance margin disagree')
         if self.order_notional > self.max_notional or self.max_positions < 1 or self.poll_seconds < 5:
             raise ValueError('Invalid exposure or polling limits')
         if self.mode != 'paper' and not (self.api_key and self.api_secret):
@@ -132,7 +166,20 @@ class Settings:
             'paper_max_margin': self.paper_max_margin,
             'paper_maintenance_rate': self.paper_maintenance_rate,
             'paper_dynamic_exits': self.paper_dynamic_exits,
+            'paper_dynamic_leverage': self.paper_dynamic_leverage,
+            'paper_min_leverage': self.paper_min_leverage,
+            'paper_max_leverage': self.paper_max_leverage,
+            'paper_risk_fraction': self.paper_risk_fraction,
+            'paper_risk_buffer_bps': self.paper_risk_buffer * 10000,
+            'paper_depth_participation': self.paper_depth_participation,
+            'paper_max_spread_bps': self.paper_max_spread_bps,
+            'paper_depth_range_bps': self.paper_depth_range_bps,
             'paper_entry_filter': self.paper_entry_filter,
+            'paper_lab_required': self.paper_lab_required,
+            'reflection_enabled': self.reflection_enabled and self.mode == 'paper',
+            'reflection_min_trades': self.reflection_min_trades,
+            'reflection_window': self.reflection_window,
+            'reflection_interval_trades': self.reflection_interval_trades,
             'poll_seconds': self.poll_seconds,
             'ai_review_max_age_seconds': self.ai_review_max_age,
             'ai_review_profile': 'paper_relaxed' if self.mode == 'paper' and self.paper_review_relaxed else 'standard',

@@ -63,13 +63,40 @@ class RealtimeReadOnlyBinance(MarketStreamMixin, ReadOnlyBinance):
             account, rows = self.account(), self.positions()
             if stream:
                 stream.seed(account, rows)
-        # ACCOUNT_UPDATE does not carry mark price. Reuse the public stream for current marks.
+        # ACCOUNT_UPDATE carries position changes but not a live mark price.
+        # Refresh every open position, including manually held symbols that are
+        # outside QUANT_SYMBOLS. Subscribed symbols use the public WebSocket;
+        # others use the signed observer's public mark endpoint as a fallback.
+        market_stream = getattr(self, 'market_stream', None)
+        if market_stream:
+            market_stream.add_symbols([row.get('symbol') for row in rows])
+        previous_unrealized = numeric(account.get('totalUnrealizedProfit', 0))
+        refreshed_unrealized = 0.0
         for row in rows:
-            if float(row.get('positionAmt', 0) or 0) and not float(row.get('markPrice', 0) or 0):
+            amount = float(row.get('positionAmt', 0) or 0)
+            if amount:
                 try:
-                    row['markPrice'] = str(self.mark(row['symbol']))
+                    mark = self.mark(row['symbol'])
+                    row['markPrice'] = str(mark)
+                    entry = float(row.get('entryPrice', 0) or 0)
+                    if entry > 0:
+                        row['unRealizedProfit'] = str((mark - entry) * amount)
                 except Exception:
-                    row['markPrice'] = '0'
+                    pass
+            try:
+                refreshed_unrealized += float(row.get('unRealizedProfit', 0) or 0)
+            except (TypeError, ValueError):
+                pass
+        # Keep account totals responsive between the less frequent full REST
+        # reconciliations. Funding, fees and margin fields are still corrected
+        # by the next signed REST snapshot.
+        delta = refreshed_unrealized - previous_unrealized
+        account['totalUnrealizedProfit'] = str(refreshed_unrealized)
+        for field in ('totalMarginBalance', 'availableBalance'):
+            try:
+                account[field] = str(float(account.get(field, 0) or 0) + delta)
+            except (TypeError, ValueError):
+                pass
         return account, rows
 
 
@@ -240,4 +267,4 @@ def run(cfg, store):
                 notifier.tick(positions, 'observing', account_snapshot=live['account'], slot_namespace='live_observation')
             except Exception:
                 logging.warning('Observation notification processing failed')
-        time.sleep(30 if error else max(15, cfg.poll_seconds))
+        time.sleep(30 if error else max(5, cfg.poll_seconds))

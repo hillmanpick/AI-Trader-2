@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from quant.ai_review import DeepSeekAdvisor
 from quant.binance import Binance
 from quant.engine import Engine
-from quant.observe import ReadOnlyBinance, advice, collect, snapshot
+from quant.observe import ReadOnlyBinance, RealtimeReadOnlyBinance, advice, collect, snapshot
 from quant.account_stream import AccountStream
 from quant.settings import Settings
 from quant.store import Store, utcnow
@@ -73,6 +73,27 @@ def test_account_stream_expiry_is_reported(cfg):
     stream.seed({}, [])
     with pytest.raises(RuntimeError, match='expired'):
         stream._message(json.dumps({'e':'listenKeyExpired'}))
+
+
+def test_realtime_account_snapshot_refreshes_marks_for_unsubscribed_positions(cfg):
+    api = RealtimeReadOnlyBinance(cfg)
+    stream = MagicMock()
+    stream.can_serve.return_value = True
+    stream.snapshot.return_value = (
+        {'totalWalletBalance': '100', 'totalMarginBalance': '105',
+         'availableBalance': '95', 'totalUnrealizedProfit': '5'},
+        [{'symbol': 'AGTUSDT', 'positionAmt': '10', 'entryPrice': '10',
+          'markPrice': '10', 'unRealizedProfit': '0'}],
+    )
+    api.account_stream = stream
+    api.mark = MagicMock(return_value=11)
+    account, rows = api.account_snapshot()
+    assert rows[0]['markPrice'] == '11'
+    assert float(rows[0]['unRealizedProfit']) == pytest.approx(10)
+    assert float(account['totalUnrealizedProfit']) == pytest.approx(10)
+    assert float(account['totalMarginBalance']) == pytest.approx(110)
+    assert float(account['availableBalance']) == pytest.approx(100)
+    api.mark.assert_called_once_with('AGTUSDT')
 
 
 def test_engine_observation_cannot_initialize_execute_or_change_journal(cfg):

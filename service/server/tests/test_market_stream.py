@@ -54,6 +54,14 @@ def test_connected_socket_without_market_events_is_not_reported_as_live():
     assert state['fresh_marks'] == 0
 
 
+def test_open_position_can_expand_public_subscription():
+    stream = MarketStream(MagicMock(offset=0), ('BTCUSDT',), '5m')
+    assert stream.add_symbols(['AGTUSDT']) is True
+    assert stream.add_symbols(['AGTUSDT']) is False
+    assert stream.symbols == ('BTCUSDT', 'AGTUSDT')
+    assert stream._restart_requested is True
+
+
 def test_market_route_and_no_event_reconnect_backoff(monkeypatch):
     import asyncio
     import quant.market_stream as module

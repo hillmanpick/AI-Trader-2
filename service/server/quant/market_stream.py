@@ -22,6 +22,8 @@ class MarketStream:
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread = None
+        self._restart_requested = False
+        self.data_ready = threading.Event()
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -41,6 +43,25 @@ class MarketStream:
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=3)
 
+    def add_symbols(self, symbols):
+        """Subscribe to newly observed open positions on the next reconnect."""
+        additions = tuple(str(symbol).upper() for symbol in symbols if symbol)
+        with self._lock:
+            merged = tuple(dict.fromkeys(self.symbols + additions))
+            if merged == self.symbols:
+                return False
+            self.symbols = merged
+            self._restart_requested = True
+            return True
+
+    def set_symbols(self, symbols):
+        """Replace candidate subscriptions; the caller retains all open positions."""
+        symbols = tuple(dict.fromkeys(symbols))
+        with self._lock:
+            if symbols != self.symbols:
+                self.symbols = symbols
+                self._restart_requested = True
+
     def _run(self):
         try:
             asyncio.run(self._consume())
@@ -50,20 +71,26 @@ class MarketStream:
                 self.state = {'status': 'stopped', 'source': 'Binance public WebSocket', 'reconnects': self.state['reconnects']}
 
     async def _consume(self):
-        streams = []
-        for symbol in self.symbols:
-            lower = symbol.lower()
-            streams.extend((f'{lower}@markPrice@1s', f'{lower}@kline_{self.interval}'))
-        url = 'wss://fstream.binance.com/market/stream?streams=' + '/'.join(streams)
         delay = 1
         while not self._stop.is_set():
             try:
+                with self._lock:
+                    symbols = tuple(self.symbols)
+                    self._restart_requested = False
+                streams = []
+                for symbol in symbols:
+                    lower = symbol.lower()
+                    streams.extend((f'{lower}@markPrice@1s', f'{lower}@kline_{self.interval}'))
+                url = 'wss://fstream.binance.com/market/stream?streams=' + '/'.join(streams)
                 timeout = aiohttp.ClientTimeout(total=None, sock_connect=10, sock_read=None)
                 async with aiohttp.ClientSession(timeout=timeout) as session:
                     async with session.ws_connect(url, heartbeat=20, autoping=True, autoclose=True) as ws:
                         with self._lock:
                             self.state = {'status': 'connected', 'source': 'Binance public WebSocket', 'reconnects': self.state['reconnects']}
                         while not self._stop.is_set():
+                            with self._lock:
+                                if self._restart_requested:
+                                    raise ConnectionError('Market WebSocket subscription changed')
                             try:
                                 message = await asyncio.wait_for(ws.receive(), timeout=15)
                             except asyncio.TimeoutError:
@@ -96,6 +123,7 @@ class MarketStream:
                     with self._lock:
                         self.marks[symbol] = price
                         self.updated['mark:' + symbol] = time.monotonic()
+                        self.data_ready.set()
             elif event == 'kline':
                 kline = data['k']
                 symbol = data['s']

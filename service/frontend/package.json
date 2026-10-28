@@ -4,7 +4,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "postbuild": "chmod -R a+rX dist",
+    "postbuild": "node scripts/postbuild.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

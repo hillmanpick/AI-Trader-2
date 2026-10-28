@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { LiveAccount } from './LiveAccount'
 import { PaperAccount } from './PaperAccount'
+import { QuantLab } from './QuantLab'
 import { formatLeverage } from './positionFormat'
 
 type Position = { amount: number; entry: number; mark: number; pnl: number; leverage?: number }
@@ -29,7 +30,7 @@ export function QuantPage() {
       setData(await r.json()); setError('')
     } catch (e) { setError(String(e)) }
   }
-  useEffect(() => { refresh(); const timer = setInterval(refresh, 15000); return () => clearInterval(timer) }, [])
+  useEffect(() => { refresh(); const timer = setInterval(refresh, 5000); return () => clearInterval(timer) }, [])
   const action = async (name: string) => {
     setBusy(true)
     try {
@@ -69,6 +70,7 @@ export function QuantPage() {
         {data.config.observation_only ? <p>实盘仅同步数据和展示 AI 建议。实盘开仓、平仓、止盈止损和账户参数修改全部关闭；独立模拟交易见下方。</p> : <p>暂停后，已有持仓的止盈止损继续运行。此按钮不会切换模拟/实盘模式。</p>}
       </div>
       <LiveAccount />
+      <QuantLab />
       <PaperAccount />
       <div style={box}>
         <h2>DeepSeek AI 判断</h2>

@@ -17,7 +17,7 @@ export function LiveAccount() {
         if (active) { setData(value); setError('') }
       } catch { if (active) setError('实盘账户暂时无法读取，请检查连接') }
     }
-    void load(); const timer = setInterval(load, 15_000)
+    void load(); const timer = setInterval(load, 5_000)
     return () => { active = false; clearInterval(timer) }
   }, [])
   const account = data?.account

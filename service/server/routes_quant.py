@@ -9,6 +9,7 @@ from quant.community import age_seconds
 from quant.ai_review import DeepSeekReviewer, DeepSeekAdvisor
 from quant.official import OfficialReads
 from quant.paper import paper_settings
+from quant.reflection import StrategyReflector
 
 
 def register_quant_routes(app):
@@ -27,19 +28,66 @@ def register_quant_routes(app):
         if action != 'operator':
             raise HTTPException(status_code=403,detail='Operator action header required')
 
+    @app.get('/api/quant/lab/status')
+    def lab_status(x_quant_token: str = Header(None)):
+        authorized(x_quant_token)
+        from quant.lab_config import LabConfig
+        from quant.lab_store import LabStore, RealtimeBus
+        from quant.lab_model import model_status
+        lab = LabConfig()
+        model,_ = model_status(lab)
+        try:
+            bus = RealtimeBus(lab.redis_url)
+            state = bus.get('state') or {}
+            redis_ok = bool(bus.client.ping())
+            ranking = bus.get('ranking') or {}
+        except Exception:
+            state,redis_ok,ranking = {},False,{}
+        try:
+            history = LabStore(lab.directory).stats()
+        except Exception:
+            history = {'samples':0,'days':0,'error':'Historical store unavailable'}
+        now = int(datetime.now(timezone.utc).timestamp()*1000)
+        try:
+            from quant.event_lake import EventLake
+            event_history = EventLake(lab.directory).stats()
+        except Exception:
+            event_history = {'error':'Event lake unavailable'}
+        try:
+            import json
+            from pathlib import Path
+            event_replay = json.loads((Path(lab.directory)/'verified-book-replay.json').read_text())
+            event_replay.pop('fills',None)
+        except (OSError,ValueError):
+            event_replay = None
+        return {'enabled':lab.enabled,'redis_connected':redis_ok,'collector':state,
+                'event_history':event_history,'ranking':ranking,'event_replay':event_replay,
+                'stale':now-state.get('ts',0)>20000,'model':model,'history':history,
+                'requirements':{'min_samples':lab.min_samples,'min_days':lab.min_days,
+                                'horizon_seconds':lab.horizon_seconds,'candidate_limit':lab.candidates,
+                                'event_validation_seconds':lab.event_validation_seconds,
+                                'sample_seconds':lab.sample_seconds,'retention_days':lab.retention_days},
+                'real_execution_enabled':False}
+
     @app.get('/api/quant/paper/status')
     def paper_status(x_quant_token: str = Header(None)):
         authorized(x_quant_token)
         paper = paper_settings(cfg)
         db = Store(paper.db_path)
         worker = db.get('worker', {'status':'not_started'})
+        symbols = db.get('config',paper.public()).get('symbols',paper.symbols)
         return {'source':'independent_paper', 'real_execution_enabled':False,
-                'config':paper.public(), 'worker':worker, 'stale':age_seconds(worker.get('heartbeat')) > 180,
+                'config':db.get('config',paper.public()), 'worker':worker, 'stale':age_seconds(worker.get('heartbeat')) > 180,
                 'paused':db.get('paused',False), 'daily_loss_blocked':db.get('daily_loss_blocked',False),
                 'account':db.get('account',{}), 'positions':db.get('positions',{}),
-                'signals':{s:db.get(f'signal:{s}') for s in paper.symbols},
-                'ai':{s:db.get(f'ai:{s}') for s in paper.symbols},
-                'entry_quality':{s:db.get(f'entry_quality:{s}') for s in paper.symbols},
+                'signals':{s:db.get(f'signal:{s}') for s in symbols},
+                'ai':{s:db.get(f'ai:{s}') for s in symbols},
+                'entry_quality':{s:db.get(f'entry_quality:{s}') for s in symbols},
+                'reflection':StrategyReflector(db, paper).status(),
+                'lab_gate':db.get('lab_gate',{}),
+                'execution_statistics':db.get('execution_statistics',{}),
+                'execution_closed_fills':db.get('execution_closed_fills',[])[-30:],
+                'sizing':{s:db.get(f'sizing:{s}') for s in db.get('config',paper.public()).get('symbols',[])},
                 'events':db.events(limit=30), 'orders':db.orders()[:30], 'mail':db.get('mail_status',{})}
 
     @app.get('/api/quant/official/{path:path}')

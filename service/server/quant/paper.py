@@ -7,7 +7,7 @@ from .binance import Binance
 from .settings import Settings
 from .market_stream import MarketStreamMixin
 
-PUBLIC_PATHS = {'/fapi/v1/time', '/fapi/v1/exchangeInfo', '/fapi/v1/premiumIndex', '/fapi/v1/klines'}
+PUBLIC_PATHS = {'/fapi/v1/time', '/fapi/v1/exchangeInfo', '/fapi/v1/premiumIndex', '/fapi/v1/klines', '/fapi/v1/depth'}
 
 
 def paper_settings(base):
@@ -17,6 +17,10 @@ def paper_settings(base):
     leverage = int(os.getenv('QUANT_PAPER_LEVERAGE', '1'))
     margin = float(os.getenv('QUANT_PAPER_MARGIN_USDT', '0'))
     max_margin = float(os.getenv('QUANT_PAPER_MAX_MARGIN_USDT', '0'))
+    dynamic = os.getenv('QUANT_PAPER_DYNAMIC_LEVERAGE','false').lower() == 'true'
+    max_leverage = int(os.getenv('QUANT_PAPER_MAX_LEVERAGE', str(leverage)))
+    if dynamic:
+        leverage = max_leverage
     cfg = replace(base, mode='paper', observation_only=False, live_enabled=False,
                   enabled=os.getenv('QUANT_PAPER_ENABLED', 'false').lower() == 'true',
                   api_key='', api_secret='', community_token='', db_path=path,
@@ -27,11 +31,25 @@ def paper_settings(base):
                   ai_review_max_age=int(os.getenv('QUANT_PAPER_AI_REVIEW_MAX_AGE_SECONDS', str(base.ai_review_max_age))),
                   paper_review_relaxed=os.getenv('QUANT_PAPER_AI_RELAXED', 'false').lower() == 'true',
                   order_notional=margin*leverage if margin else float(os.getenv('QUANT_PAPER_ORDER_NOTIONAL_USDT', '2000')),
-                  max_notional=max_margin*leverage if max_margin else float(os.getenv('QUANT_PAPER_MAX_TOTAL_NOTIONAL_USDT', '6000')),
+                  max_notional=(float(os.getenv('QUANT_PAPER_MAX_TOTAL_NOTIONAL_USDT', str(max_margin*leverage)))
+                                if dynamic else max_margin*leverage if max_margin else float(os.getenv('QUANT_PAPER_MAX_TOTAL_NOTIONAL_USDT', '6000'))),
                   paper_margin=margin, paper_max_margin=max_margin,
                   paper_maintenance_rate=float(os.getenv('QUANT_PAPER_MAINTENANCE_RATE', '.005')),
                   paper_dynamic_exits=os.getenv('QUANT_PAPER_DYNAMIC_EXITS','false').lower() == 'true',
+                  paper_dynamic_leverage=dynamic,
+                  paper_min_leverage=int(os.getenv('QUANT_PAPER_MIN_LEVERAGE', str(min(2,max_leverage)))),
+                  paper_max_leverage=max_leverage,
+                  paper_risk_fraction=float(os.getenv('QUANT_PAPER_RISK_FRACTION', '.10')),
+                  paper_risk_buffer=float(os.getenv('QUANT_PAPER_RISK_BUFFER_BPS', '10'))/10000,
+                  paper_depth_participation=float(os.getenv('QUANT_PAPER_DEPTH_PARTICIPATION', '.05')),
+                  paper_max_spread_bps=float(os.getenv('QUANT_PAPER_MAX_SPREAD_BPS', '10')),
+                  paper_depth_range_bps=float(os.getenv('QUANT_PAPER_DEPTH_RANGE_BPS', '10')),
                   paper_entry_filter=os.getenv('QUANT_PAPER_ENTRY_FILTER','shadow'),
+                  paper_lab_required=os.getenv('QUANT_PAPER_LAB_REQUIRED','false').lower() == 'true',
+                  reflection_enabled=os.getenv('QUANT_PAPER_REFLECTION_ENABLED','true').lower() == 'true',
+                  reflection_min_trades=int(os.getenv('QUANT_PAPER_REFLECTION_MIN_TRADES', str(base.reflection_min_trades))),
+                  reflection_window=int(os.getenv('QUANT_PAPER_REFLECTION_WINDOW', str(base.reflection_window))),
+                  reflection_interval_trades=int(os.getenv('QUANT_PAPER_REFLECTION_INTERVAL_TRADES', str(base.reflection_interval_trades))),
                   max_positions=int(os.getenv('QUANT_PAPER_MAX_POSITIONS', '3')),
                   leverage=leverage,
                   paper_slippage=float(os.getenv('QUANT_PAPER_SLIPPAGE_BPS', '0'))/10000,
@@ -58,4 +76,20 @@ class PaperMarket(Binance):
 
 
 class RealtimePaperMarket(MarketStreamMixin, PaperMarket):
-    pass
+    def liquidity(self, symbol):
+        from .lab_config import LabConfig
+        from .lab_store import RealtimeBus
+        cfg = LabConfig()
+        if cfg.enabled:
+            row = RealtimeBus(cfg.redis_url).get('liquidity:'+symbol)
+            if not row or __import__('time').time()*1000-row['updated_ms'] > 2000:
+                raise ValueError('Live depth not ready')
+            return row
+        if self.cfg.paper_lab_required:
+            raise ValueError('Lab collection is not enabled')
+        from .order_book import DepthBook
+        book = DepthBook()
+        now = int(__import__('time').time()*1000)
+        book.seed(self.request('GET','/fapi/v1/depth',{'symbol':symbol,'limit':1000}),now)
+        book.ready = bool(book.bids and book.asks and max(book.bids) < min(book.asks))
+        return book.metrics(now,self.cfg.paper_depth_range_bps)
