@@ -59,4 +59,10 @@ sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.bo
   --strict --output /data/lab/replay-check.json
 ```
 
+配置外部 ClickHouse 后，可重复执行已校验 Parquet 分段导出；导出检查点按服务地址、数据库和表名隔离，命令不会打印连接凭据：
+
+```bash
+sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.event_export
+```
+
 回放数据库独立于真实账户与既有模拟余额。不要把历史 `orders` JSON 注入实盘接口。所有执行器均为模拟，没有网络下单客户端。

@@ -321,3 +321,11 @@ def test_clickhouse_export_is_checksummed_and_idempotent(tmp_path):
     # catalog target is endpoint + database + table, not only the URL.
     with patch.object(requests,'Session',return_value=session):
         assert lake.export_clickhouse('http://clickhouse:8123', table='other_events') == 1
+
+
+def test_clickhouse_export_cli_requires_explicit_sink(monkeypatch, tmp_path):
+    from quant.event_export import export_once
+    from quant.lab_config import LabConfig
+    monkeypatch.delenv('QUANT_CLICKHOUSE_URL', raising=False)
+    with pytest.raises(RuntimeError, match='not configured'):
+        export_once(LabConfig(directory=str(tmp_path)))
