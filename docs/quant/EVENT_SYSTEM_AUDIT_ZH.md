@@ -193,3 +193,7 @@ SQLite WAL 将撮合检查点与账本放在同一事务，避免 Redis 重启�
 模拟账本仍暂停、空仓，钱包约 979,758.52 USDT；实盘账户 WebSocket 只读连接正常，执行开关关闭。服务器未配置 Binance 历史成交只读 Key 和生产 ClickHouse 地址，因此历史 unresolved 区间与外部导出仍是待完成项。
 
 随后等待重连后的连续窗口形成，再对当前集合 `ARBUSDT,BTCUSDT,DASHUSDT,ETHUSDT,FILUSDT,HYPEUSDT,LINKUSDT,PONSUSDT,QNTUSDT,SUIUSDT,WLDUSDT,ZECUSDT` 进行固定 180 秒严格回放。窗口 `1793207105963–1793207285963` 毫秒，处理 41,796 条事件、15,585 次盘口重建，序号缺口 0，12/12 币 `book_ready=true`，末尾深度年龄 12–209ms，`valid=true`。本地处理 P50/P95/P99 为 0.003997/0.390030/0.770215ms，源事件接收差 P50/P95 为 36.028/82.270ms；清单 SHA256 `13bd5acea26e46e83d52ad73ce260738678351bcb874d44de47565f382406919`，84 个分段。报告为 `/home/ai-trader-quant/deploy/data/lab/strict-window-search-current-2.json`。该报告证明重连后能形成新的连续盘口窗口，不改变固定模型 OOS 规则，也不证明策略收益或交易所执行 SLA。
+
+## 2026-10-29 最新训练门禁复核
+
+独立执行一次 `python -m quant.lab_train` 读取当前 SQLite 标签和特征，得到 `status=insufficient_data`：原始样本 56,644 条、可训练样本 6,964 条、可训练覆盖 0.270541 天；硬门槛仍为 10,000 条和 7 天。该命令只写研究报告，不改变模型启用状态、模拟账本或实盘配置；模型状态继续为 `ready=false`。重新计算用于排除训练器 6 小时 watch 周期造成的旧报告延迟，不能把累计样本数或合成回放当成时间覆盖。
