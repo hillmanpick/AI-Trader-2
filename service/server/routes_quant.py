@@ -1,4 +1,5 @@
 import hmac
+import os
 from datetime import datetime, timezone
 
 from fastapi import Header, HTTPException, Request
@@ -50,7 +51,12 @@ def register_quant_routes(app):
         now = int(datetime.now(timezone.utc).timestamp()*1000)
         try:
             from quant.event_lake import EventLake
-            event_history = EventLake(lab.directory).stats()
+            lake = EventLake(lab.directory)
+            event_history = lake.stats()
+            event_history['clickhouse'] = lake.export_status(
+                os.getenv('QUANT_CLICKHOUSE_URL',''),
+                os.getenv('QUANT_CLICKHOUSE_DATABASE','quant'),
+                os.getenv('QUANT_CLICKHOUSE_TABLE','events'))
         except Exception:
             event_history = {'error':'Event lake unavailable'}
         try:

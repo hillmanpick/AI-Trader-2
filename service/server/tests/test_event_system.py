@@ -487,6 +487,8 @@ def test_clickhouse_export_is_checksummed_and_idempotent(tmp_path):
     # catalog target is endpoint + database + table, not only the URL.
     with patch.object(requests,'Session',return_value=session):
         assert lake.export_clickhouse('http://clickhouse:8123', table='other_events') == 1
+        # Returning to the original target must retain its checkpoint.
+        assert lake.export_clickhouse('http://clickhouse:8123') == 0
 
 
 def test_clickhouse_export_cli_requires_explicit_sink(monkeypatch, tmp_path):
@@ -495,3 +497,89 @@ def test_clickhouse_export_cli_requires_explicit_sink(monkeypatch, tmp_path):
     monkeypatch.delenv('QUANT_CLICKHOUSE_URL', raising=False)
     with pytest.raises(RuntimeError, match='not configured'):
         export_once(LabConfig(directory=str(tmp_path)))
+
+
+def test_clickhouse_export_status_is_redacted_and_tracks_pending_segments(tmp_path):
+    from unittest.mock import MagicMock,patch
+    import requests
+    lake = EventLake(tmp_path)
+    lake.append([event('trade',2000000000,t=1,p='1.00',q='2.00',m=False,T=2000)])
+    with patch.object(requests,'Session',side_effect=AssertionError('status must not connect')):
+        empty = lake.export_status()
+    assert empty == {'configured':False,'target_hash':None,'segments':1,
+                      'exported_segments':0,'pending_segments':1,'last_export_ns':None}
+    session = MagicMock()
+    session.post.return_value = MagicMock(ok=True,status_code=200)
+    url = 'http://operator:private-password@clickhouse:8123'
+    with patch.object(requests,'Session',return_value=session):
+        assert lake.export_clickhouse(url,database='quant',table='events')==1
+    with patch.object(requests,'Session',side_effect=AssertionError('status must not connect')):
+        status = lake.export_status(url,'quant','events')
+    assert status['configured'] and status['exported_segments']==1 and status['pending_segments']==0
+    assert status['last_export_ns']>0
+    assert all(value not in json.dumps(status) for value in (url,'private-password','operator','clickhouse:8123'))
+    assert all(value not in lake.path.read_bytes() for value in (url.encode(),b'private-password'))
+    other = lake.export_status(url,'quant','another_table')
+    assert other['exported_segments']==0 and other['pending_segments']==1
+    assert other['target_hash']!=status['target_hash']
+    lake.append([event('trade',3000000000,t=2,p='1.00',q='2.00',m=False,T=3000)])
+    status = lake.export_status(url)
+    assert (status['segments'],status['exported_segments'],status['pending_segments'])==(2,1,1)
+    # Pruned segments are no longer pending or counted as retained exports.
+    lake.retention_hours = 0
+    lake.prune()
+    status = lake.export_status(url)
+    assert (status['segments'],status['exported_segments'],status['pending_segments'])==(0,0,0)
+    assert status['last_export_ns'] is None
+
+
+def test_clickhouse_failed_insert_remains_pending_for_retry(tmp_path):
+    from unittest.mock import MagicMock,patch
+    import requests
+    lake = EventLake(tmp_path)
+    lake.append([event('trade',2000000000,t=1,p='1.00',q='2.00',m=False,T=2000)])
+    session = MagicMock()
+    ok = MagicMock(ok=True,status_code=200)
+    session.post.side_effect = [ok,ok,MagicMock(ok=False,status_code=503)]
+    with patch.object(requests,'Session',return_value=session):
+        with pytest.raises(RuntimeError,match='ClickHouse HTTP 503'):
+            lake.export_clickhouse('http://clickhouse:8123')
+        status = lake.export_status('http://clickhouse:8123')
+        assert status['exported_segments']==0 and status['pending_segments']==1
+        session.post.side_effect = None
+        session.post.return_value = ok
+        assert lake.export_clickhouse('http://clickhouse:8123')==1
+        assert lake.export_clickhouse('http://clickhouse:8123')==0
+
+
+def test_legacy_export_checkpoint_migration_preserves_previous_target(tmp_path):
+    lake = EventLake(tmp_path)
+    lake.append([event('trade',2000000000,t=1,p='1.00',q='2.00',m=False,T=2000)])
+    path = lake.segments()[0]['path']
+    target = lake._export_target('http://clickhouse:8123','quant','events')
+    with lake.connect() as c:
+        c.execute('DROP TABLE exports')
+        c.execute('CREATE TABLE exports (path TEXT PRIMARY KEY,target TEXT,ts_ns INTEGER)')
+        c.execute('INSERT INTO exports VALUES (?,?,?)',(path,target,123))
+    migrated = EventLake(tmp_path)
+    assert migrated.export_status('http://clickhouse:8123')['exported_segments']==1
+    with migrated.connect() as c:
+        c.execute('INSERT INTO exports VALUES (?,?,?)',(path,'different-target',456))
+        assert c.execute('SELECT COUNT(*) FROM exports').fetchone()[0]==2
+    # Re-opening does not repeat the migration or lose either target.
+    assert EventLake(tmp_path).export_status('http://clickhouse:8123')['last_export_ns']==123
+
+
+def test_clickhouse_transport_error_does_not_expose_url_credentials(tmp_path):
+    import traceback
+    from unittest.mock import MagicMock,patch
+    import requests
+    lake = EventLake(tmp_path)
+    session = MagicMock()
+    sink_url = 'http://operator:private-password@sink:8123'
+    session.post.side_effect = requests.ConnectionError(sink_url+' refused')
+    with patch.object(requests,'Session',return_value=session):
+        with pytest.raises(RuntimeError,match='ClickHouse request failed') as error:
+            lake.export_clickhouse(sink_url)
+    rendered = ''.join(traceback.format_exception(error.type,error.value,error.tb))
+    assert 'private-password' not in rendered and 'operator:' not in rendered

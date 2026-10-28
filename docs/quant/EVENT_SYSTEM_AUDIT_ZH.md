@@ -83,6 +83,12 @@ sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.bo
 sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.event_export
 ```
 
+研究页现在展示 ClickHouse 本地检查点：仅统计当前仍保留的 Parquet 分片、当前目标已导出数和待导出数。统计在一条 SQLite 聚合查询的同一快照中完成，不逐个加载目录，也不在刷新页面时连接外部服务。`configured=true` 仅表示设置了地址，不是连通性或远端数据完整性的证明。URL、用户名和密码不会出现在返回的进度中，目标只用 SHA256 标识。
+
+导出目录的旧版 `path` 主键会事务迁移为 `(target,path)`，保留已有检查点，切换数据库或表后不会覆盖原目标进度。只有成功的 HTTP 导入才登记本地完成状态；失败仍待重试。服务端已经接受但客户端未登记的重试可能重复插入；`ReplacingMergeTree` 的逻辑去重查询需要使用 `FINAL`（或等待合并），不能把未启用服务端去重时的 insert token 当作立即消除物理重复的保证。
+
+本轮本地回归 353 passed、2 skipped，前端生产构建通过。外部 ClickHouse 仍未配置；曾尝试本地临时 ClickHouse 实机验证，但镜像下载被镜像仓库返回 Forbidden，容器未启动，因此未形成真实导入验收证据。
+
 严格多币回放在发现序号缺口、未重建盘口或窗口末尾深度过期时会以失败码退出，但仍先写出诊断报告；报告包含每币事件数、最后深度序号、深度年龄以及缺口前后的 `U/u/pu`，便于区分断流和窗口边界问题。
 
 回放数据库独立于真实账户与既有模拟余额。不要把历史 `orders` JSON 注入实盘接口。所有执行器均为模拟，没有网络下单客户端。

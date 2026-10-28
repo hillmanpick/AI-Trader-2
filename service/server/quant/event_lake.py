@@ -89,8 +89,19 @@ class EventLake:
                 CREATE TABLE IF NOT EXISTS checkpoints (
                   symbol TEXT PRIMARY KEY, trade_id INTEGER, ts_ns INTEGER);
                 CREATE TABLE IF NOT EXISTS exports (
-                  path TEXT PRIMARY KEY, target TEXT, ts_ns INTEGER);
+                  path TEXT, target TEXT, ts_ns INTEGER, PRIMARY KEY(target,path));
             ''')
+            primary = [r['name'] for r in sorted(c.execute('PRAGMA table_info(exports)'),key=lambda r:r['pk']) if r['pk']]
+            if primary != ['target','path']:
+                # Migrate the legacy path-only key atomically. Recheck under
+                # the writer lock in case another process just migrated it.
+                c.execute('BEGIN IMMEDIATE')
+                primary = [r['name'] for r in sorted(c.execute('PRAGMA table_info(exports)'),key=lambda r:r['pk']) if r['pk']]
+                if primary != ['target','path']:
+                    c.execute('CREATE TABLE exports_v2 (path TEXT,target TEXT,ts_ns INTEGER,PRIMARY KEY(target,path))')
+                    c.execute('INSERT INTO exports_v2 SELECT path,target,ts_ns FROM exports')
+                    c.execute('DROP TABLE exports')
+                    c.execute('ALTER TABLE exports_v2 RENAME TO exports')
 
     @contextmanager
     def connect(self):
@@ -243,21 +254,48 @@ class EventLake:
         return dict(row) | {'symbols_with_durable_trades':symbols,'gaps':kinds,
                             'format':'Parquet/ZSTD events-v1','max_bytes':self.max_bytes}
 
+    def export_status(self, url='', database='quant', table='events'):
+        """Local checkpoints for retained segments; never probes the remote sink."""
+        url = (url or '').strip()
+        target = self._export_target(url,database,table) if url else None
+        with self.connect() as c:
+            row = c.execute('''SELECT COUNT(*) AS segments,COUNT(e.path) AS exported,
+                MAX(e.ts_ns) AS last_export_ns FROM segments s LEFT JOIN exports e
+                ON e.path=s.path AND e.target=?''',(target,)).fetchone()
+        return {'configured':bool(url),'target_hash':target,'segments':row['segments'],
+                'exported_segments':row['exported'],
+                'pending_segments':row['segments']-row['exported'],
+                'last_export_ns':row['last_export_ns']}
+
+    @staticmethod
+    def _export_target(url,database,table):
+        return hashlib.sha256(json.dumps([url.strip().rstrip('/'),database,table]).encode()).hexdigest()
+
     def export_clickhouse(self,url,database='quant',table='events',username='',password=''):
-        """Optional external sink. Insert tokens make retries of a segment idempotent."""
+        """Export with local checkpoints; use FINAL for retry deduplication.
+
+        A lost HTTP response/checkpoint can repeat an accepted insert. Insert
+        tokens help when server-side deduplication is enabled; ReplacingMergeTree
+        with FINAL supplies logical deduplication before background merges.
+        """
         import re
         import requests
         if not all(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name) for name in (database,table)):
             raise ValueError('Invalid ClickHouse identifier')
         # The same endpoint can host many independent archives. Hashing also
         # keeps URL credentials out of the catalog target identifier.
-        target = hashlib.sha256(json.dumps([url.rstrip('/'),database,table]).encode()).hexdigest()
+        url = url.strip()
+        target = self._export_target(url,database,table)
         session = requests.Session()
         session.trust_env = False
         if username:
             session.auth = (username,password)
         def query(sql,data=None,params=None):
-            r = session.post(url,params={'query':sql,**(params or {})},data=data,timeout=(5,60))
+            try:
+                r = session.post(url,params={'query':sql,**(params or {})},data=data,timeout=(5,60))
+            except requests.RequestException:
+                # Requests errors may contain credentials embedded in the URL.
+                raise RuntimeError('ClickHouse request failed') from None
             if not r.ok:
                 raise RuntimeError(f'ClickHouse HTTP {r.status_code}')
         query(f'CREATE DATABASE IF NOT EXISTS {database}')
