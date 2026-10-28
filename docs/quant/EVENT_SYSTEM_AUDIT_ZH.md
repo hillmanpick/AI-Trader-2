@@ -191,3 +191,5 @@ SQLite WAL 将撮合检查点与账本放在同一事务，避免 Redis 重启�
 对当前动态候选集合 `BNBUSDT,BTCUSDT,DOGEUSDT,DOTUSDT,ETHUSDT,HBARUSDT,NEARUSDT,SUIUSDT,TRXUSDT,UNIUSDT,WLDUSDT,XAUTUSDT` 做最近 900 秒有界严格窗口搜索，4 个候选全部拒绝：窗口内出现采集器重启产生的 `depthStatus disconnected/connected` 控制证据；其中一个候选还包含 1 个深度序号缺口，另一个包含 4 个。报告 `/home/ai-trader-quant/deploy/data/lab/strict-window-search-current.json` 保留了每个候选的控制事件和诊断。该失败是当前数据质量的真实结果，不能用重连前深度、过滤控制事件或删币修复；待新的连续窗口形成后再复核。
 
 模拟账本仍暂停、空仓，钱包约 979,758.52 USDT；实盘账户 WebSocket 只读连接正常，执行开关关闭。服务器未配置 Binance 历史成交只读 Key 和生产 ClickHouse 地址，因此历史 unresolved 区间与外部导出仍是待完成项。
+
+随后等待重连后的连续窗口形成，再对当前集合 `ARBUSDT,BTCUSDT,DASHUSDT,ETHUSDT,FILUSDT,HYPEUSDT,LINKUSDT,PONSUSDT,QNTUSDT,SUIUSDT,WLDUSDT,ZECUSDT` 进行固定 180 秒严格回放。窗口 `1793207105963–1793207285963` 毫秒，处理 41,796 条事件、15,585 次盘口重建，序号缺口 0，12/12 币 `book_ready=true`，末尾深度年龄 12–209ms，`valid=true`。本地处理 P50/P95/P99 为 0.003997/0.390030/0.770215ms，源事件接收差 P50/P95 为 36.028/82.270ms；清单 SHA256 `13bd5acea26e46e83d52ad73ce260738678351bcb874d44de47565f382406919`，84 个分段。报告为 `/home/ai-trader-quant/deploy/data/lab/strict-window-search-current-2.json`。该报告证明重连后能形成新的连续盘口窗口，不改变固定模型 OOS 规则，也不证明策略收益或交易所执行 SLA。
