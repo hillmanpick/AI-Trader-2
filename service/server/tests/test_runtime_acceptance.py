@@ -1,0 +1,53 @@
+import json
+import os
+import sys
+from unittest.mock import patch
+
+
+SERVER_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+if SERVER_DIR not in sys.path:
+    sys.path.insert(0, SERVER_DIR)
+
+from quant import runtime_acceptance
+
+
+def payload(model_ready=False):
+    return {
+        "enabled": True,
+        "collector": {
+            "status": "collecting", "universe_count": 2,
+            "trade_symbols_seen": 2, "all_market_trades": True,
+            "errors": 0, "raw_dropped": 0, "ready_symbols": ["BTCUSDT", "ETHUSDT"],
+            "depth_gaps": 0, "blocked": {},
+        },
+        "redis_connected": True,
+        "history": {"clean_training": {"samples": 10000, "days": 7}},
+        "model": {"ready": model_ready, "reason": "test"},
+        "event_history": {"format": "Parquet/ZSTD events-v2", "rows": 10,
+                           "bytes": 100, "max_bytes": 1000,
+                           "clickhouse": {"configured": False}},
+    }, {
+        "config": {"paper_dynamic_leverage": True, "paper_margin": 2000,
+                   "paper_max_margin": 6000, "paper_major_max_leverage": 100,
+                   "paper_min_leverage": 2, "paper_max_leverage": 20},
+        "paused": True, "positions": {},
+    }, {
+        "read_only": True, "execution_enabled": False,
+        "account_stream": {"status": "connected"},
+    }
+
+
+def test_runtime_acceptance_passes_only_with_model_gate(capsys):
+    with patch.object(runtime_acceptance, "get", side_effect=payload(model_ready=True)):
+        assert runtime_acceptance.main() == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["failed"] is False
+    assert all(check["ok"] for check in report["checks"])
+
+
+def test_runtime_acceptance_keeps_model_gate_hard(capsys):
+    with patch.object(runtime_acceptance, "get", side_effect=payload(model_ready=False)):
+        assert runtime_acceptance.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    failed = {check["name"] for check in report["checks"] if not check["ok"]}
+    assert failed == {"model_oos_gate"}
