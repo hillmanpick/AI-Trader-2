@@ -405,6 +405,21 @@ def test_zero_value_source_frames_keep_trade_ids_without_reconnecting(tmp_path):
     asyncio.run(check())
 
 
+def test_book_ticker_projection_is_not_written_to_durable_event_lake(tmp_path):
+    import asyncio
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path)))
+        await collector.record_event({'e':'bookTicker','s':'BTCUSDT','E':1,'u':2,
+                                      'b':'100','B':'1','a':'101','A':'1'})
+        assert collector.event_queue.empty()
+        await collector.record_event({'e':'trade','s':'BTCUSDT','E':1,'T':1,
+                                      't':1,'p':'100','q':'1','m':False})
+        assert collector.event_queue.qsize()==1
+    asyncio.run(check())
+
+
 def test_paper_partial_fills_update_wallet_margin_and_reduce_only_atomically(tmp_path):
     import time
     from unittest.mock import MagicMock,patch

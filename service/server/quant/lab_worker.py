@@ -75,6 +75,11 @@ class Collector:
         self.raw.append(data)
 
     async def record_event(self,data,source='websocket',received_ns=None):
+        # bookTicker is a redundant best-quote projection of the depth feed.
+        # Depth snapshots/diffs remain the durable reconstruction source; do
+        # not spend event-lake capacity storing an otherwise unused duplicate.
+        if data.get('e') == 'bookTicker':
+            return
         await self.event_queue.put(envelope(data,source,received_ns))
 
     async def event_writer(self):
