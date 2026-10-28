@@ -51,10 +51,14 @@ def main():
                        "stale, missing or warming"))
     hard_blocked = {symbol: reason for symbol, reason in blocked.items()
                     if not any(marker.lower() in str(reason).lower() for marker in transient)}
-    check(report, bool(ready) and not collector.get("depth_gaps") and not hard_blocked,
+    check(report, bool(ready) and not int(collector.get("depth_gap_active") or 0)
+          and not hard_blocked,
           "candidate_books_ready", {"ready": len(ready), "candidate_count": len(collector.get("candidates") or []),
           "transient_blocked": {s: r for s, r in blocked.items() if s not in hard_blocked},
-          "hard_blocked": hard_blocked, "depth_gaps": collector.get("depth_gaps")})
+          "hard_blocked": hard_blocked,
+          "depth_gaps_total": collector.get("depth_gaps"),
+          "depth_gap_active": collector.get("depth_gap_active"),
+          "depth_gap_symbols": collector.get("depth_gap_symbols")})
     check(report, lab.get("redis_connected") is True, "redis_connected")
     check(report, str(event_history.get("format", "")).startswith("Parquet/ZSTD")
           and int(event_history.get("rows") or 0) > 0

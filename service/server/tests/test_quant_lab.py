@@ -53,6 +53,7 @@ def test_depth_bridge_duplicates_gap_rebuild_and_zero_deletion():
     assert b.ready
     assert not b.apply({'U':103,'u':104,'pu':102,'b':[],'a':[]},1004)
     assert b.last is None and b.gaps == 1
+    assert b.sequence_gap_active
     with pytest.raises(ValueError):
         b.metrics(1005)
 
@@ -74,7 +75,7 @@ def test_futures_snapshot_bridge_accepts_next_diff_when_pu_equals_snapshot_id():
     # snapshot id while pu proves the previous event ended exactly there.
     first = {'U':100045,'u':100058,'pu':90052,'b':[['99','9']],'a':[]}
     assert b.apply(first,1001)
-    assert b.ready and b.last==100058 and b.gaps==0
+    assert b.ready and b.last==100058 and b.gaps==0 and not b.sequence_gap_active
     assert b.apply({'U':100059,'u':100070,'pu':100058,'b':[],'a':[['101','8']]},1002)
     assert b.last==100070 and b.gaps==0
 
@@ -83,7 +84,7 @@ def test_futures_snapshot_bridge_still_rejects_unproven_first_diff():
     b = DepthBook()
     b.seed({'lastUpdateId':90052,'bids':[['99','10']],'asks':[['101','10']]},1000)
     assert not b.apply({'U':100045,'u':100058,'pu':90051,'b':[],'a':[]},1001)
-    assert not b.ready and b.last is None and b.gaps==1
+    assert not b.ready and b.last is None and b.gaps==1 and b.sequence_gap_active
 
 
 def row(ts,price=100,symbol='BTCUSDT',label=0):

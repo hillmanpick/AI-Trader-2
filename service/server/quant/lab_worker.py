@@ -472,10 +472,16 @@ class Collector:
                 await self.record_event({'e':'ranking','s':'','E':rank_time,'rows':ranking},'derived')
             except Exception:
                 self.errors += 1
+            depth_gap_symbols = sorted(s for s,b in self.books.items()
+                                       if getattr(b,'sequence_gap_active',False))
             state = {'status':'collecting','ts':now,'universe_count':len(self.rules),
                      'candidates':list(self.selected),'ready_symbols':[r['symbol'] for r in rows],
                      'blocked':blocked,'ticker_age_ms':max(0,int(time.time()*1000)-self.received_ms) if self.received_ms else None,
+                     # Keep cumulative gaps for auditability, but expose live
+                     # recovery state separately for health gates.
                      'depth_gaps':sum(b.gaps for b in self.books.values()),
+                     'depth_gap_active':len(depth_gap_symbols),
+                     'depth_gap_symbols':depth_gap_symbols,
                      'trade_gaps':sum(self.builder.trade_gaps.values()),'reconnects':self.reconnects,
                      'raw_dropped':self.raw_dropped+self.archive.dropped,
                      'raw_archive_complete':not (self.raw_dropped or self.archive.dropped),'errors':self.errors,

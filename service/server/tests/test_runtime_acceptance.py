@@ -18,7 +18,7 @@ def payload(model_ready=False):
             "status": "collecting", "universe_count": 2,
             "trade_symbols_seen": 2, "all_market_trades": True,
             "errors": 0, "raw_dropped": 0, "ready_symbols": ["BTCUSDT", "ETHUSDT"],
-            "depth_gaps": 0, "blocked": {},
+            "depth_gaps": 0, "depth_gap_active": 0, "depth_gap_symbols": [], "blocked": {},
         },
         "redis_connected": True,
         "history": {"clean_training": {"samples": 10000, "days": 7}},
@@ -74,3 +74,26 @@ def test_runtime_acceptance_allows_depth_feature_warmup(capsys):
     report = json.loads(capsys.readouterr().out)
     failed = {check["name"] for check in report["checks"] if not check["ok"]}
     assert failed == {"model_oos_gate"}
+
+
+def test_runtime_acceptance_allows_recovered_historical_depth_gap(capsys):
+    lab, paper, live = payload(model_ready=False)
+    lab["collector"]["depth_gaps"] = 2
+    lab["collector"]["depth_gap_active"] = 0
+    with patch.object(runtime_acceptance, "get", side_effect=(lab, paper, live)):
+        assert runtime_acceptance.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    failed = {check["name"] for check in report["checks"] if not check["ok"]}
+    assert failed == {"model_oos_gate"}
+
+
+def test_runtime_acceptance_blocks_active_depth_gap(capsys):
+    lab, paper, live = payload(model_ready=False)
+    lab["collector"]["depth_gaps"] = 2
+    lab["collector"]["depth_gap_active"] = 1
+    lab["collector"]["depth_gap_symbols"] = ["BTCUSDT"]
+    with patch.object(runtime_acceptance, "get", side_effect=(lab, paper, live)):
+        assert runtime_acceptance.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    failed = {check["name"] for check in report["checks"] if not check["ok"]}
+    assert failed == {"candidate_books_ready", "model_oos_gate"}

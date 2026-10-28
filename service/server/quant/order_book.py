@@ -10,6 +10,9 @@ class DepthBook:
         self.ready = False
         self.bridged = False
         self.gaps = 0
+        # Historical gap evidence is kept in ``gaps``. This flag describes
+        # current live health and clears after a snapshot is bridged.
+        self.sequence_gap_active = False
         self.updated_ms = 0
         self.snapshot_ms = 0
         self.ofi = deque()
@@ -30,6 +33,7 @@ class DepthBook:
         self.bids, self.asks = self.levels(snapshot['bids']), self.levels(snapshot['asks'])
         self.last = int(snapshot['lastUpdateId'])
         self.ready, self.bridged = False, False
+        self.sequence_gap_active = False
         self.updated_ms = received_ms
         self.snapshot_ms = received_ms
         self.ofi.clear()
@@ -56,6 +60,7 @@ class DepthBook:
         if not valid:
             self.ready, self.last = False, None
             self.gaps += 1
+            self.sequence_gap_active = True
             self.ofi.clear()
             self.ofi_started_ms = None
             return False
@@ -72,6 +77,8 @@ class DepthBook:
                     target.pop(p, None)
         self.last, self.updated_ms, self.bridged = end, received_ms, True
         self.ready = bool(self.bids and self.asks and max(self.bids) < min(self.asks))
+        if self.ready:
+            self.sequence_gap_active = False
         if self.ready and received_ms >= self.snapshot_ms:
             quote = self.best_quote()
             if self.ofi_started_ms is None:
