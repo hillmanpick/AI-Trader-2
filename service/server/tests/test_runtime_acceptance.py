@@ -51,3 +51,14 @@ def test_runtime_acceptance_keeps_model_gate_hard(capsys):
     report = json.loads(capsys.readouterr().out)
     failed = {check["name"] for check in report["checks"] if not check["ok"]}
     assert failed == {"model_oos_gate"}
+
+
+def test_runtime_acceptance_allows_candidate_rotation_warmup(capsys):
+    lab, paper, live = payload(model_ready=False)
+    lab["collector"]["ready_symbols"] = ["BTCUSDT"]
+    lab["collector"]["blocked"] = {"ETHUSDT": "Feature warmup needs 60 seconds"}
+    with patch.object(runtime_acceptance, "get", side_effect=(lab, paper, live)):
+        assert runtime_acceptance.main() == 1
+    report = json.loads(capsys.readouterr().out)
+    failed = {check["name"] for check in report["checks"] if not check["ok"]}
+    assert failed == {"model_oos_gate"}

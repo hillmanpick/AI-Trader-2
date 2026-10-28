@@ -46,9 +46,14 @@ def main():
     check(report, bool(collector.get("all_market_trades")) and not collector.get("errors")
           and not collector.get("raw_dropped"), "trade_ingest_health",
           {"errors": collector.get("errors"), "raw_dropped": collector.get("raw_dropped")})
-    check(report, bool(ready) and not collector.get("depth_gaps") and not collector.get("blocked"),
-          "candidate_books_ready", {"ready": len(ready), "blocked": collector.get("blocked"),
-          "depth_gaps": collector.get("depth_gaps")})
+    blocked = collector.get("blocked") or {}
+    transient = tuple(("Feature warmup", "warming after reconnect", "stale, missing or warming"))
+    hard_blocked = {symbol: reason for symbol, reason in blocked.items()
+                    if not any(marker.lower() in str(reason).lower() for marker in transient)}
+    check(report, bool(ready) and not collector.get("depth_gaps") and not hard_blocked,
+          "candidate_books_ready", {"ready": len(ready), "candidate_count": len(collector.get("candidates") or []),
+          "transient_blocked": {s: r for s, r in blocked.items() if s not in hard_blocked},
+          "hard_blocked": hard_blocked, "depth_gaps": collector.get("depth_gaps")})
     check(report, lab.get("redis_connected") is True, "redis_connected")
     check(report, str(event_history.get("format", "")).startswith("Parquet/ZSTD")
           and int(event_history.get("rows") or 0) > 0
