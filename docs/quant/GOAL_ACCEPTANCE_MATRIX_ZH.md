@@ -1,0 +1,32 @@
+# AI-Trader 15 项系统验收矩阵
+
+本文把原定 15 项系统目标与当前代码、测试和服务器证据对应起来。`代码完成` 表示实现和自动化测试已经存在；`运行验收` 还要求服务器实时状态或外部依赖满足条件。
+
+| # | 目标 | 主要实现 | 当前证据 | 状态 |
+|---:|---|---|---|---|
+| 1 | 全市场动态币池 | `quant/lab_worker.py`、`quant/market_ranker.py` | 服务器 `universe_count=522`，候选池动态轮换 | 代码完成，运行通过 |
+| 2 | 全市场逐笔成交采集 | `quant/lab_worker.py` 的分片 `@trade` 订阅 | 5 个分片连接，`trade_symbols_seen=522`，`raw_dropped=0` | 代码完成，运行通过 |
+| 3 | 候选盘口重建 | `quant/order_book.py`、快照与 `U/u/pu` 校验 | 当前候选盘口就绪，运行时 `depth_gaps=0` | 代码完成，运行通过 |
+| 4 | Redis 实时层 | `quant/lab_store.py`、`quant/cache.py` | Redis healthcheck 正常，实时状态和事件 Stream 可读 | 代码完成，运行通过 |
+| 5 | Parquet/ClickHouse 历史库 | `quant/event_lake.py`、`quant/event_export.py` | Parquet/ZSTD 已写入并校验；ClickHouse exporter 有测试 | Parquet 运行通过；生产 ClickHouse 待外部地址/凭据 |
+| 6 | 订单流特征 | `quant/lab_features.py` | `microstructure-v3` 固定 14 维特征写入实时层和 SQLite | 代码完成，运行通过 |
+| 7 | 向量模型 | `lab_train.py` 的 StandardScaler + MiniBatchKMeans 原型融合 | 模型文件格式、特征 schema 和推理门禁有测试 | 代码完成；真实模型待训练门禁 |
+| 8 | 方向预测模型 | `lab_train.py` 的多分类逻辑回归 | 类别、权重、模型 hash 和推理校验有测试 | 代码完成；真实模型待 OOS 验证 |
+| 9 | 全市场排序器 | `quant/market_ranker.py` | Redis `ranking` 返回方向、活跃度、波动和成交量排序 | 代码完成，运行通过 |
+| 10 | 历史盘口回放 | `quant/book_replay.py`、`quant/event_validation.py` | 严格窗口曾达到 `valid=true`、序号缺口 0 | 代码完成；每个新模型仍需独立 OOS 窗口 |
+| 11 | 毫秒级执行统计 | `quant/execution_state.py`、`quant/book_replay.py` | 回放报告记录 ACK、首次成交、撤单和本地处理 P50/P95/P99 | 代码完成，运行通过 |
+| 12 | 三重障碍标签 | `quant/event_labels.py` | 使用逐笔成交路径，缺口/重连/覆盖不足样本标记无效 | 代码完成，运行中累计标签 |
+| 13 | Walk-forward 与防泄漏 | `lab_train.py`、`event_validation.py` | chronological split、purge/embargo、validation-only 阈值选择 | 代码完成，模型未达到数据门禁 |
+| 14 | 组合相关性风控 | `quant/correlation_risk.py`、`engine.py` | EWMA 协方差、收缩、带符号敞口纳入开仓容量 | 代码完成，自动化测试通过 |
+| 15 | 部分成交和订单状态机 | `quant/execution_state.py`、`quant/paper_execution.py` | IOC/GTC、撤单、重启恢复、事务回滚和盘口消耗有测试 | 代码完成，运行通过 |
+
+## 当前硬门禁
+
+- 服务器采集器当前持续运行，但有效训练数据覆盖约 0.29 天；训练要求至少 10,000 条干净样本和 7 天连续覆盖。门禁未通过时模型保持 `ready=false`，模拟盘不开新仓。
+- 事件库当前使用 Parquet/ZSTD；生产 ClickHouse 目标为空，不能把 exporter 适配器测试当成生产 ClickHouse 已上线。
+- 历史成交缺口中仍有 unresolved 区间。没有配置只读 `BINANCE_MARKET_DATA_KEY` 时，系统只尝试有限公共补采，无法声称旧历史完全连续。
+- 实盘账户 WebSocket 只读连接保持开启，`execution_enabled=false`；模拟账本独立、暂停、空仓。
+
+## 验收规则
+
+模型只有在样本数量、连续覆盖、独立 validation/test/stress 事件回放、模型版本、执行策略 hash 和事件清单 hash 全部匹配后，才允许进入独立模拟。历史回放的毫秒数是本机处理和模拟撮合观测，不是币安真实订单延迟或盈利保证。
