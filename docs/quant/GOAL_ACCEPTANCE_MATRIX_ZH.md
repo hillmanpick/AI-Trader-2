@@ -24,6 +24,7 @@
 
 - 服务器采集器当前持续运行，但有效训练数据覆盖约 0.29 天；训练要求至少 10,000 条干净样本和 7 天连续覆盖。门禁未通过时模型保持 `ready=false`，模拟盘不开新仓。
 - 本轮手动训练检查已读取最新数据：60,413 原始样本、7,595 条干净样本、0.295 天干净覆盖，结果仍为 `insufficient_data`。
+- 服务器已部署只读运行验收命令 `python -m quant.runtime_acceptance`。最新执行中采集、全市场逐笔覆盖、候选盘口、Redis、Parquet 上限、动态杠杆、模拟安全状态和实盘只读检查均通过；命令返回 `1` 仅因为模型 OOS 门禁仍未通过。最新统计为 7,917 条干净样本、0.307 天覆盖，ClickHouse 生产目标仍未配置。
 - 事件库当前使用 Parquet/ZSTD；生产 ClickHouse 目标为空，不能把 exporter 适配器测试当成生产 ClickHouse 已上线。
 - 历史成交缺口中仍有 unresolved 区间。没有配置只读 `BINANCE_MARKET_DATA_KEY` 时，系统只尝试有限公共补采，无法声称旧历史完全连续。
 - 实盘账户 WebSocket 只读连接保持开启，`execution_enabled=false`；模拟账本独立、暂停、空仓。
