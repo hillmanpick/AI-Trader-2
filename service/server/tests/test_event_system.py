@@ -571,10 +571,14 @@ def test_clickhouse_failed_insert_remains_pending_for_retry(tmp_path):
     lake.append([event('trade',2000000000,t=1,p='1.00',q='2.00',m=False,T=2000)])
     session = MagicMock()
     ok = MagicMock(ok=True,status_code=200)
-    session.post.side_effect = [ok,ok,MagicMock(ok=False,status_code=503)]
+    def fail_insert(*args,**kwargs):
+        is_insert = kwargs['params']['query'].startswith('INSERT INTO')
+        return MagicMock(ok=False,status_code=503) if is_insert else ok
+    session.post.side_effect = fail_insert
     with patch.object(requests,'Session',return_value=session):
         with pytest.raises(RuntimeError,match='ClickHouse HTTP 503'):
             lake.export_clickhouse('http://clickhouse:8123')
+        assert session.post.call_args.kwargs['params']['query'].startswith('INSERT INTO')
         status = lake.export_status('http://clickhouse:8123')
         assert status['exported_segments']==0 and status['pending_segments']==1
         session.post.side_effect = None
@@ -616,19 +620,22 @@ def test_clickhouse_transport_error_does_not_expose_url_credentials(tmp_path):
     assert 'private-password' not in rendered and 'operator:' not in rendered
 
 
-def test_clickhouse_watch_retries_remote_failure_without_leaking_details(monkeypatch,capsys):
+@pytest.mark.parametrize('failure',[RuntimeError,OSError,ValueError])
+def test_clickhouse_watch_retries_remote_failure_without_leaking_details(monkeypatch,capsys,failure):
     from quant import event_export
     monkeypatch.setattr(event_export,'export_once',
-                        lambda cfg=None: (_ for _ in ()).throw(RuntimeError('ClickHouse request failed')))
+                        lambda cfg=None: (_ for _ in ()).throw(failure('https://operator:private-password@sink')))
     monkeypatch.setattr(event_export.time,'sleep',lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt))
     with pytest.raises(KeyboardInterrupt):
         event_export.watch(10)
     output = capsys.readouterr().out
-    assert 'retrying' in output and 'ClickHouse request failed' in output
-    assert 'password' not in output.lower()
+    assert 'retrying' in output and 'checkpoints retained' in output
+    assert json.loads(output)['error_type']==failure.__name__
+    assert 'private-password' not in output and 'operator:' not in output
 
 
-def test_clickhouse_watch_rejects_unsafe_interval():
+@pytest.mark.parametrize('interval',[0,9,3601])
+def test_clickhouse_watch_rejects_unsafe_interval(interval):
     from quant.event_export import watch
     with pytest.raises(ValueError,match='between 10 and 3600'):
-        watch(9)
+        watch(interval)

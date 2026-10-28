@@ -25,17 +25,18 @@ def export_once(cfg=None):
 
 def watch(interval=None, cfg=None):
     """Continuously retry export without making an unset sink fatal."""
-    interval = int(interval or os.getenv('QUANT_CLICKHOUSE_EXPORT_INTERVAL_SECONDS', '60'))
+    interval = int(os.getenv('QUANT_CLICKHOUSE_EXPORT_INTERVAL_SECONDS', '60') if interval is None else interval)
     if not 10 <= interval <= 3600:
         raise ValueError('ClickHouse export interval must be between 10 and 3600 seconds')
     while True:
         try:
             result = export_once(cfg)
-        except RuntimeError as exc:
+        except Exception as exc:
             # A remote outage must not kill the exporter; credentials and URL
             # are deliberately absent from the log.
             result = {'exported_segments': 0, 'status': 'retrying',
-                      'reason': str(exc)}
+                      'reason': 'ClickHouse export failed; checkpoints retained',
+                      'error_type': type(exc).__name__}
         print(json.dumps(result, ensure_ascii=False), flush=True)
         time.sleep(interval)
 

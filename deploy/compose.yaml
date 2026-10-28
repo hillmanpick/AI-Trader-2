@@ -126,7 +126,16 @@ services:
     profiles: [clickhouse]
     image: ai-trader-quant:local
     pull_policy: never
-    env_file: .env
+    environment:
+      QUANT_LAB_DIR: ${QUANT_LAB_DIR:-/data/lab}
+      QUANT_EVENT_MAX_GB: ${QUANT_EVENT_MAX_GB:-6}
+      QUANT_LAB_RETENTION_DAYS: ${QUANT_LAB_RETENTION_DAYS:-14}
+      QUANT_CLICKHOUSE_URL: ${QUANT_CLICKHOUSE_URL:-}
+      QUANT_CLICKHOUSE_DATABASE: ${QUANT_CLICKHOUSE_DATABASE:-quant}
+      QUANT_CLICKHOUSE_TABLE: ${QUANT_CLICKHOUSE_TABLE:-events}
+      QUANT_CLICKHOUSE_USER: ${QUANT_CLICKHOUSE_USER:-}
+      QUANT_CLICKHOUSE_PASSWORD: ${QUANT_CLICKHOUSE_PASSWORD:-}
+      QUANT_CLICKHOUSE_EXPORT_INTERVAL_SECONDS: ${QUANT_CLICKHOUSE_EXPORT_INTERVAL_SECONDS:-60}
     command: [python, -m, quant.event_export, --watch]
     restart: unless-stopped
     volumes:
