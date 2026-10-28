@@ -31,3 +31,15 @@
 ## 验收规则
 
 模型只有在样本数量、连续覆盖、独立 validation/test/stress 事件回放、模型版本、执行策略 hash 和事件清单 hash 全部匹配后，才允许进入独立模拟。历史回放的毫秒数是本机处理和模拟撮合观测，不是币安真实订单延迟或盈利保证。
+
+## 一键只读检查
+
+在 API 容器内执行，不会改变暂停状态、订单、密钥或模型文件：
+
+```bash
+cd /home/ai-trader-quant
+sudo docker compose -f deploy/compose.yaml exec -T api \
+  python -m quant.runtime_acceptance
+```
+
+返回码为 `0` 才表示运行健康且模型样本外门禁已通过；返回码为 `1` 表示服务运行正常但仍有硬门禁未满足（例如数据覆盖不足）；返回码为 `2` 表示 API 读取或认证失败。输出只包含计数、状态和门禁原因，不输出 API 密钥、邮件授权码或账户令牌。
