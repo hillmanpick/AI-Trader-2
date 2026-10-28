@@ -13,7 +13,7 @@
 | 7 | 向量模型 | `lab_train.py` 的 StandardScaler + MiniBatchKMeans 原型融合 | 模型文件格式、特征 schema 和推理门禁有测试 | 代码完成；真实模型待训练门禁 |
 | 8 | 方向预测模型 | `lab_train.py` 的多分类逻辑回归 | 类别、权重、模型 hash 和推理校验有测试 | 代码完成；真实模型待 OOS 验证 |
 | 9 | 全市场排序器 | `quant/market_ranker.py` | Redis `ranking` 返回方向、活跃度、波动和成交量排序 | 代码完成，运行通过 |
-| 10 | 历史盘口回放 | `quant/book_replay.py`、`quant/event_validation.py` | 严格窗口曾达到 `valid=true`、序号缺口 0 | 代码完成；每个新模型仍需独立 OOS 窗口 |
+| 10 | 历史盘口回放 | `quant/book_replay.py`、`quant/event_validation.py` | 当前候选集合最新严格窗口 `valid=true`：32,951 条事件、11,149 次盘口重建、0 个序号缺口、12/12 币种；报告 `strict-window-search-live.json` | 代码完成，当前窗口通过；每个新模型仍需独立 OOS 窗口 |
 | 11 | 毫秒级执行统计 | `quant/execution_state.py`、`quant/book_replay.py` | 回放报告记录 ACK、首次成交、撤单和本地处理 P50/P95/P99 | 代码完成，运行通过 |
 | 12 | 三重障碍标签 | `quant/event_labels.py` | 使用逐笔成交路径，缺口/重连/覆盖不足样本标记无效 | 代码完成，运行中累计标签 |
 | 13 | Walk-forward 与防泄漏 | `lab_train.py`、`event_validation.py` | chronological split、purge/embargo、validation-only 阈值选择 | 代码完成，模型未达到数据门禁 |
@@ -23,6 +23,7 @@
 ## 当前硬门禁
 
 - 服务器采集器当前持续运行，但有效训练数据覆盖约 0.29 天；训练要求至少 10,000 条干净样本和 7 天连续覆盖。门禁未通过时模型保持 `ready=false`，模拟盘不开新仓。
+- 本轮手动训练检查已读取最新数据：60,413 原始样本、7,595 条干净样本、0.295 天干净覆盖，结果仍为 `insufficient_data`。
 - 事件库当前使用 Parquet/ZSTD；生产 ClickHouse 目标为空，不能把 exporter 适配器测试当成生产 ClickHouse 已上线。
 - 历史成交缺口中仍有 unresolved 区间。没有配置只读 `BINANCE_MARKET_DATA_KEY` 时，系统只尝试有限公共补采，无法声称旧历史完全连续。
 - 实盘账户 WebSocket 只读连接保持开启，`execution_enabled=false`；模拟账本独立、暂停、空仓。
