@@ -599,3 +599,21 @@ def test_clickhouse_transport_error_does_not_expose_url_credentials(tmp_path):
             lake.export_clickhouse(sink_url)
     rendered = ''.join(traceback.format_exception(error.type,error.value,error.tb))
     assert 'private-password' not in rendered and 'operator:' not in rendered
+
+
+def test_clickhouse_watch_retries_remote_failure_without_leaking_details(monkeypatch,capsys):
+    from quant import event_export
+    monkeypatch.setattr(event_export,'export_once',
+                        lambda cfg=None: (_ for _ in ()).throw(RuntimeError('ClickHouse request failed')))
+    monkeypatch.setattr(event_export.time,'sleep',lambda seconds: (_ for _ in ()).throw(KeyboardInterrupt))
+    with pytest.raises(KeyboardInterrupt):
+        event_export.watch(10)
+    output = capsys.readouterr().out
+    assert 'retrying' in output and 'ClickHouse request failed' in output
+    assert 'password' not in output.lower()
+
+
+def test_clickhouse_watch_rejects_unsafe_interval():
+    from quant.event_export import watch
+    with pytest.raises(ValueError,match='between 10 and 3600'):
+        watch(9)

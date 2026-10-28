@@ -83,6 +83,8 @@ sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.bo
 sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.event_export
 ```
 
+配置 `QUANT_CLICKHOUSE_URL`、数据库/表和凭据后，可用 `--profile clickhouse up -d clickhouse-exporter` 启动持续导出 worker；它每 60 秒（可由 `QUANT_CLICKHOUSE_EXPORT_INTERVAL_SECONDS` 调整，范围 10–3600 秒）扫描校验过的分片，成功后登记本地检查点，远端失败时保留待导出状态并重试。默认 Compose 不启用该 profile，所以未配置外部服务时不会新增常驻进程。
+
 研究页现在展示 ClickHouse 本地检查点：仅统计当前仍保留的 Parquet 分片、当前目标已导出数和待导出数。统计在一条 SQLite 聚合查询的同一快照中完成，不逐个加载目录，也不在刷新页面时连接外部服务。`configured=true` 仅表示设置了地址，不是连通性或远端数据完整性的证明。URL、用户名和密码不会出现在返回的进度中，目标只用 SHA256 标识。
 
 导出目录的旧版 `path` 主键会事务迁移为 `(target,path)`，保留已有检查点，切换数据库或表后不会覆盖原目标进度。只有成功的 HTTP 导入才登记本地完成状态；失败仍待重试。服务端已经接受但客户端未登记的重试可能重复插入；`ReplacingMergeTree` 的逻辑去重查询需要使用 `FINAL`（或等待合并），不能把未启用服务端去重时的 insert token 当作立即消除物理重复的保证。

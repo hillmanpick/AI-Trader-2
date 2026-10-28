@@ -122,6 +122,20 @@ services:
         condition: service_started
     mem_limit: 768m
     cpus: 0.5
+  clickhouse-exporter:
+    profiles: [clickhouse]
+    image: ai-trader-quant:local
+    pull_policy: never
+    env_file: .env
+    command: [python, -m, quant.event_export, --watch]
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    depends_on:
+      lab-collector:
+        condition: service_started
+    mem_limit: 96m
+    cpus: 0.25
   platform-worker:
     image: ai-trader-quant:local
     pull_policy: never
