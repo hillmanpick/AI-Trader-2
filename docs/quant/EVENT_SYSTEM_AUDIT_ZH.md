@@ -65,4 +65,6 @@ sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.bo
 sudo docker compose -f deploy/compose.yaml exec lab-collector python -m quant.event_export
 ```
 
+严格多币回放在发现序号缺口、未重建盘口或窗口末尾深度过期时会以失败码退出，但仍先写出诊断报告；报告包含每币事件数、最后深度序号、深度年龄以及缺口前后的 `U/u/pu`，便于区分断流和窗口边界问题。
+
 回放数据库独立于真实账户与既有模拟余额。不要把历史 `orders` JSON 注入实盘接口。所有执行器均为模拟，没有网络下单客户端。

@@ -7,7 +7,7 @@ import pytest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from quant.event_lake import EventLake,envelope
 from quant.execution_state import OrderJournal,SimulatedBroker
-from quant.book_replay import HistoricalBookReplay
+from quant.book_replay import HistoricalBookReplay, ReplayValidationError
 from quant.order_book import DepthBook
 from quant.market_ranker import MarketRanker
 from quant.correlation_risk import portfolio_risk,cap_notional
@@ -149,6 +149,56 @@ def test_book_replay_requires_snapshot_bridge_and_reports_measured_processing(tm
     assert report['execution']['first_fill']['p50_ms']==28
     with pytest.raises(ValueError,match='sorted'):
         replay.consume(events[0])
+
+
+def test_strict_replay_requires_depth_for_every_requested_symbol(tmp_path):
+    events = [event('depthSnapshot',1000000000,lastUpdateId=100,
+                    bids=[['99','5']],asks=[['101','2']]),
+              event('depthUpdate',1001000000,U=100,u=101,pu=99,b=[],a=[])]
+    broker = SimulatedBroker(OrderJournal(tmp_path/'orders.db'))
+    replay = HistoricalBookReplay(broker,require_complete=True,
+                                   expected_symbols={'BTCUSDT','ETHUSDT'})
+    with pytest.raises(ReplayValidationError) as exc:
+        replay.run(events)
+    report = exc.value.report
+    assert 'missing_requested_depth:ETHUSDT' in report['invalid_reasons']
+    assert report['symbols']['BTCUSDT']['book_ready']
+    assert report['symbols']['ETHUSDT']['events']==0
+
+
+def test_replay_keeps_gap_evidence_even_after_snapshot_recovers_book(tmp_path):
+    broker = SimulatedBroker(OrderJournal(tmp_path/'orders.db'))
+    replay = HistoricalBookReplay(broker,require_complete=True,expected_symbols={'BTCUSDT'})
+    events = [event('depthSnapshot',1000000000,lastUpdateId=100,bids=[['99','5']],asks=[['101','2']]),
+              event('depthUpdate',1001000000,U=100,u=101,pu=99,b=[],a=[]),
+              event('depthUpdate',1002000000,U=103,u=104,pu=102,b=[],a=[]),
+              event('depthSnapshot',1003000000,lastUpdateId=103,bids=[['99','5']],asks=[['101','2']]),
+              event('depthUpdate',1004000000,U=105,u=106,pu=104,b=[],a=[])]
+    with pytest.raises(ReplayValidationError) as exc:
+        replay.run(events)
+    report = exc.value.report
+    assert not report['valid'] and report['sequence_gaps']==1
+    assert report['symbols']['BTCUSDT']['book_ready']
+    detail, = report['gap_details']
+    assert detail['kind']=='depth' and detail['previous_id']==101
+    assert detail['ids']['pu']==102
+
+
+def test_strict_cli_writes_rejected_window_and_keeps_failure_exit(monkeypatch,tmp_path):
+    from quant.book_replay import main
+    lake = EventLake(tmp_path)
+    lake.append([event('trade',2000000000,t=1,p='100',q='1',m=False,T=2000)])
+    output = tmp_path/'rejected.json'
+    monkeypatch.setattr(sys,'argv',['book_replay','--directory',str(tmp_path),'--start-ms','1900',
+        '--end-ms','2100','--symbols','BTCUSDT,ETHUSDT','--strict','--output',str(output)])
+    with pytest.raises(SystemExit) as exc:
+        main()
+    assert exc.value.code==2
+    report = json.loads(output.read_text(encoding='utf-8'))
+    assert not report['valid']
+    assert report['requested_window']['symbols']==['BTCUSDT','ETHUSDT']
+    assert 'missing_requested_depth:BTCUSDT' in report['invalid_reasons']
+    assert report['execution']['orders']==0
 
 
 def test_all_market_ranker_uses_only_received_flow_and_invalidates_gaps():
