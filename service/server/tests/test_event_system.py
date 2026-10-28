@@ -167,6 +167,24 @@ def test_book_replay_requires_snapshot_bridge_and_reports_measured_processing(tm
         replay.consume(events[0])
 
 
+def test_archived_replay_accepts_exact_previous_update_link_after_snapshot(tmp_path):
+    ns = 1000000000
+    events = [
+        event('depthSnapshot',ns,lastUpdateId=11947828490052,
+              bids=[['99','5']],asks=[['101','2']]),
+        event('depthUpdate',ns+1000000,U=11947828510045,u=11947828516458,
+              pu=11947828490052,b=[],a=[]),
+        event('depthUpdate',ns+2000000,U=11947828516459,u=11947828520000,
+              pu=11947828516458,b=[],a=[]),
+    ]
+    replay = HistoricalBookReplay(SimulatedBroker(OrderJournal(tmp_path/'snapshot-link.db')),
+                                  require_complete=True,expected_symbols={'BTCUSDT'})
+    report = replay.run(events)
+    assert report['valid'] and report['sequence_gaps']==0
+    assert report['symbols']['BTCUSDT']['last_update_id']==11947828520000
+    assert report['symbols']['BTCUSDT']['reconstructed_depth_updates']==2
+
+
 def test_depth_disconnect_prevents_replay_fills_until_new_snapshot_bridge(tmp_path):
     journal = OrderJournal(tmp_path/'disconnect.db')
     replay = HistoricalBookReplay(SimulatedBroker(journal,ack_ms=0))
@@ -256,6 +274,30 @@ def test_collector_depth_gap_is_archived_and_snapshot_recovers_without_reusing_d
         assert not collector.buffers['BTCUSDT']
         await collector.reset_depth_feed(('BTCUSDT',),'disconnected')
         assert not collector.books['BTCUSDT'].ready
+    asyncio.run(check())
+
+
+def test_collector_snapshot_successor_does_not_emit_false_gap_or_request_reseed(tmp_path):
+    import asyncio
+    from collections import deque
+    from unittest.mock import MagicMock
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path)))
+        b = DepthBook()
+        b.seed({'lastUpdateId':90052,'bids':[['99','5']],'asks':[['101','2']]},1000)
+        collector.books['BTCUSDT'] = b
+        collector.buffers['BTCUSDT'] = deque(maxlen=10000)
+        collector.seed_needed = MagicMock()
+        frame = {'e':'depthUpdate','s':'BTCUSDT','E':1001,
+                 'U':100045,'u':100058,'pu':90052,'b':[['99','4']],'a':[]}
+        await collector.accept_depth(frame,1001000000)
+        assert b.ready and b.last == 100058 and b.gaps == 0
+        collector.seed_needed.assert_not_called()
+        archived = collector.event_queue.get_nowait()
+        assert archived['kind'] == 'depthUpdate' and archived['received_ns'] == 1001000000
+        assert collector.event_queue.empty()
     asyncio.run(check())
 
 

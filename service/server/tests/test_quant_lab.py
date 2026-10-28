@@ -67,6 +67,25 @@ def test_truncated_depth_is_a_conservative_lower_bound_and_stale_is_blocked():
         b.metrics(4000)
 
 
+def test_futures_snapshot_bridge_accepts_next_diff_when_pu_equals_snapshot_id():
+    b = DepthBook()
+    b.seed({'lastUpdateId':90052,'bids':[['99','10']],'asks':[['101','10']]},1000)
+    # Binance USD-M can emit a merged range whose U is greater than the REST
+    # snapshot id while pu proves the previous event ended exactly there.
+    first = {'U':100045,'u':100058,'pu':90052,'b':[['99','9']],'a':[]}
+    assert b.apply(first,1001)
+    assert b.ready and b.last==100058 and b.gaps==0
+    assert b.apply({'U':100059,'u':100070,'pu':100058,'b':[],'a':[['101','8']]},1002)
+    assert b.last==100070 and b.gaps==0
+
+
+def test_futures_snapshot_bridge_still_rejects_unproven_first_diff():
+    b = DepthBook()
+    b.seed({'lastUpdateId':90052,'bids':[['99','10']],'asks':[['101','10']]},1000)
+    assert not b.apply({'U':100045,'u':100058,'pu':90051,'b':[],'a':[]},1001)
+    assert not b.ready and b.last is None and b.gaps==1
+
+
 def row(ts,price=100,symbol='BTCUSDT',label=0):
     return {'symbol':symbol,'ts':ts,'price':price,'vector':[float(label)]*len(FEATURES),
             'meta':{'quality':True,'schema':SCHEMA,'atr_proxy':.001,'bid':price*.99999,

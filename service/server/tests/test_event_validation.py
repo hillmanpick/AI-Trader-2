@@ -224,6 +224,18 @@ def test_archived_parquet_holdout_replay_is_repeatable_and_net_of_realistic_cost
     assert first['fees']>0 and first['funding']>0 and first['trades']==3
 
 
+def test_real_holdout_entry_point_requires_depth_for_every_requested_symbol(tmp_path):
+    lake = EventLake(tmp_path)
+    lake.append(market_events())
+    report = replay_model(lake,model(),policy(),65000,160000,{'BTCUSDT','ETHUSDT'})
+    assert report['requested_symbols'] == ['BTCUSDT','ETHUSDT']
+    assert not report['valid']
+    assert 'missing_requested_depth:ETHUSDT' in report['invalid_reasons']
+    assert not validation_passes(report)
+    with pytest.raises(ValueError, match='explicit symbols'):
+        replay_model(lake,model(),policy(),65000,160000,set())
+
+
 def test_threshold_selection_never_uses_test_results():
     calls = []
     def fake(lake,m,p,start,end,symbols,stress=False):

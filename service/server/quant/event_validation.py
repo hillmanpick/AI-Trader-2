@@ -18,7 +18,7 @@ from .lab_model import decide
 from .market_ranker import MarketRanker
 from .strategies import size_risk_plan, update_dynamic_exit
 
-REPLAY_SCHEMA = 'portfolio-individual-events-v2'
+REPLAY_SCHEMA = 'portfolio-individual-events-v3'
 KINDS = {'depthSnapshot','depthUpdate','trade','feature','feedStatus','depthStatus','candidates'}
 
 
@@ -232,6 +232,9 @@ class ModelEventReplay(HistoricalBookReplay):
 
 
 def replay_model(lake, model, policy, start_ms, end_ms, symbols, *, stress=False):
+    symbols = set(symbols)
+    if not symbols or any(not isinstance(s,str) or not s.strip() for s in symbols):
+        raise ValueError('Model holdout requires explicit symbols')
     if model['version'] != model_version(model) or model['training_end_ms'] >= start_ms:
         raise ValueError('Model version or chronological OOS boundary mismatch')
     warmup = max(120000,policy['horizon_seconds']*1000)
@@ -241,8 +244,10 @@ def replay_model(lake, model, policy, start_ms, end_ms, symbols, *, stress=False
     with tempfile.TemporaryDirectory(prefix='quant-model-replay-') as directory:
         engine = ModelEventReplay(OrderJournal(Path(directory)/'orders.db'),model,policy,
                                   start_ms*1000000,end_ms*1000000,stress=stress)
+        engine.expected_symbols = symbols
         report = engine.report(lake.iter_events((start_ms-warmup)*1000000,end_ms*1000000,
-                                                set(symbols)|{''},KINDS))
+                                                symbols|{''},KINDS))
+    report['requested_symbols'] = sorted(symbols)
     report['manifest_hash'] = fingerprint([{k:s[k] for k in ('path','sha256','first_ns','last_ns')} for s in segments])
     report['segments'] = len(segments)
     return report

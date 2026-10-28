@@ -47,8 +47,12 @@ class DepthBook:
         end = int(event['u'])
         if end < self.last or (self.bridged and end == self.last):
             return False
-        # Futures first frame must cover lastUpdateId, subsequent pu must equal u.
-        valid = int(event['pu']) == self.last if self.bridged else int(event['U']) <= self.last <= end
+        # A REST snapshot may end exactly at the previous depth event. In that
+        # case the first buffered Futures diff can start at U > lastUpdateId;
+        # pu == last still proves continuity. Otherwise the first diff must
+        # overlap the snapshot, and every later diff must chain through pu.
+        first_bridge = int(event['U']) <= self.last <= end or int(event['pu']) == self.last
+        valid = int(event['pu']) == self.last if self.bridged else first_bridge
         if not valid:
             self.ready, self.last = False, None
             self.gaps += 1
