@@ -18,8 +18,8 @@ from .lab_model import decide
 from .market_ranker import MarketRanker
 from .strategies import size_risk_plan, update_dynamic_exit
 
-REPLAY_SCHEMA = 'portfolio-individual-events-v1'
-KINDS = {'depthSnapshot','depthUpdate','trade','feature','feedStatus','candidates'}
+REPLAY_SCHEMA = 'portfolio-individual-events-v2'
+KINDS = {'depthSnapshot','depthUpdate','trade','feature','feedStatus','depthStatus','candidates'}
 
 
 class ModelEventReplay(HistoricalBookReplay):
@@ -169,6 +169,10 @@ class ModelEventReplay(HistoricalBookReplay):
                 self.ranker.invalidate(s,now//1000000)
                 if s in self.positions:
                     self.invalid.append('trade_feed_disconnected_while_holding')
+        if kind=='depthStatus':
+            for s in payload.get('symbols', [symbol] if symbol else []):
+                if s in self.positions:
+                    self.invalid.append('depth_feed_reset_while_holding')
         if kind=='candidates':
             self.active_candidates = set(payload['symbols'])
         if kind=='trade' and event['source']=='websocket' and float(payload['p'])>0 and float(payload['q'])>0:

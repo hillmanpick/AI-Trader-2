@@ -151,6 +151,122 @@ def test_book_replay_requires_snapshot_bridge_and_reports_measured_processing(tm
         replay.consume(events[0])
 
 
+def test_depth_disconnect_prevents_replay_fills_until_new_snapshot_bridge(tmp_path):
+    journal = OrderJournal(tmp_path/'disconnect.db')
+    replay = HistoricalBookReplay(SimulatedBroker(journal,ack_ms=0))
+    ns = 1000000000
+    replay.consume(event('depthSnapshot',ns,lastUpdateId=100,
+                         bids=[['99','5']],asks=[['101','2']]))
+    replay.consume(event('depthUpdate',ns+1000000,U=100,u=101,pu=99,b=[],a=[]))
+    assert replay.books['BTCUSDT'].ready
+    replay.broker.submit('must-not-fill','BTCUSDT',1,'1',ns+2000000)
+    replay.consume(envelope({'e':'depthStatus','s':'','symbols':['BTCUSDT'],
+                            'status':'disconnected'},'control',ns+2000000))
+    assert not replay.books['BTCUSDT'].ready
+    assert journal.get('must-not-fill')['state']=='EXPIRED'
+    assert not journal.fills() and not replay.buffers['BTCUSDT']
+    # A diff alone cannot recover the old connection's book.
+    replay.consume(event('depthUpdate',ns+3000000,U=102,u=103,pu=101,b=[],a=[]))
+    assert not replay.books['BTCUSDT'].ready
+    replay.consume(event('depthSnapshot',ns+4000000,lastUpdateId=102,
+                         bids=[['99','5']],asks=[['101','2']]))
+    assert replay.books['BTCUSDT'].ready
+
+
+def test_collector_rejects_late_snapshot_from_replaced_connection(tmp_path):
+    import asyncio
+    from unittest.mock import MagicMock
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path)))
+        collector.bus = MagicMock()
+        collector.books['BTCUSDT'] = book()
+        started,release = asyncio.Event(),asyncio.Event()
+        async def slow_snapshot(*args):
+            started.set()
+            await release.wait()
+            return {'lastUpdateId':500,'bids':[['99','5']],'asks':[['101','2']]}
+        collector.read = slow_snapshot
+        collector.seed_needed('BTCUSDT')
+        old = collector.snapshot_tasks['BTCUSDT']
+        await started.wait()
+        collector.books['BTCUSDT'] = replacement = DepthBook()
+        # The late task must not remove a newer snapshot task's registration.
+        newer = asyncio.create_task(asyncio.Event().wait())
+        collector.snapshot_tasks['BTCUSDT'] = newer
+        release.set()
+        await old
+        assert replacement.last is None
+        assert collector.snapshot_tasks['BTCUSDT'] is newer
+        assert collector.event_queue.empty()
+        await collector.reset_depth_feed(('BTCUSDT',),'disconnected')
+        assert newer.cancelled() and 'BTCUSDT' not in collector.snapshot_tasks
+        status = collector.event_queue.get_nowait()
+        assert status['kind']=='depthStatus' and status['payload']['status']=='disconnected'
+        collector.bus.client.delete.assert_called_once_with(
+            'quant:lab:book:BTCUSDT','quant:lab:liquidity:BTCUSDT')
+    asyncio.run(check())
+
+
+def test_collector_depth_gap_is_archived_and_snapshot_recovers_without_reusing_diffs(tmp_path):
+    import asyncio,time
+    from unittest.mock import MagicMock
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path)))
+        collector.bus = MagicMock()
+        now = time.time_ns()
+        collector.books['BTCUSDT'] = book(now//1000000)
+        release = asyncio.Event()
+        async def snapshot(*args):
+            await release.wait()
+            return {'lastUpdateId':104,'bids':[['99','5']],'asks':[['101','2']]}
+        collector.read = snapshot
+        gap={'e':'depthUpdate','s':'BTCUSDT','E':now//1000000,
+             'U':104,'u':104,'pu':103,'b':[],'a':[]}
+        await collector.accept_depth(gap,now)
+        assert not collector.books['BTCUSDT'].ready
+        update = collector.event_queue.get_nowait()
+        evidence = collector.event_queue.get_nowait()
+        assert update['received_ns']==now
+        assert evidence['payload']['previous_u']==101 and evidence['payload']['pu']==103
+        await asyncio.sleep(0)
+        await collector.accept_depth(gap | {'U':104,'u':105,'pu':104},now+1000000)
+        release.set()
+        await collector.snapshot_tasks['BTCUSDT']
+        assert collector.books['BTCUSDT'].ready and collector.books['BTCUSDT'].last==105
+        assert not collector.buffers['BTCUSDT']
+        await collector.reset_depth_feed(('BTCUSDT',),'disconnected')
+        assert not collector.books['BTCUSDT'].ready
+    asyncio.run(check())
+
+
+def test_depth_gap_control_event_is_durable_catalog_evidence(tmp_path):
+    import asyncio
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path)))
+        await collector.record_event({'e':'depthStatus','s':'BTCUSDT','status':'sequence_gap',
+                                      'previous_u':101,'U':104,'u':105,'pu':103},'control')
+        writer = asyncio.create_task(collector.event_writer())
+        try:
+            await asyncio.wait_for(collector.event_queue.join(),timeout=10)
+        finally:
+            writer.cancel()
+            await asyncio.gather(writer,return_exceptions=True)
+        with collector.lake.connect() as c:
+            row = c.execute("SELECT * FROM gaps WHERE kind='depth'").fetchone()
+        assert row['symbol']=='BTCUSDT' and row['status']=='unresolved'
+        assert (row['start_id'],row['end_id'])==(101,103)
+        assert json.loads(row['detail'])['pu']==103
+        archived, = collector.lake.iter_events(kinds={'depthStatus'})
+        assert archived['payload']['previous_u']==101
+    asyncio.run(check())
+
+
 def test_strict_replay_requires_depth_for_every_requested_symbol(tmp_path):
     events = [event('depthSnapshot',1000000000,lastUpdateId=100,
                     bids=[['99','5']],asks=[['101','2']]),

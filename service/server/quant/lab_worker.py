@@ -100,6 +100,12 @@ class Collector:
             # A failed write exits the supervisor. No queue records are silently
             # dropped; restart resumes from the durable trade checkpoint.
             await asyncio.to_thread(self.lake.append,batch)
+            for event in batch:
+                payload = event['payload']
+                if event['kind']=='depthStatus' and payload.get('status')=='sequence_gap':
+                    await asyncio.to_thread(self.lake.gap,event['symbol'],'depth',
+                        payload['previous_u'],payload['pu'],'unresolved',
+                        json.dumps({k:payload[k] for k in ('U','u','pu','previous_u')}))
             # Labels only use durably archived events; never sampled quotes or
             # a REST repair arriving after a trading decision.
             for event in sorted(batch,key=lambda e:e['received_ns']):
@@ -112,11 +118,16 @@ class Collector:
                 self.event_queue.task_done()
 
     async def seed(self, symbol):
+        book = self.books[symbol]
+        task = asyncio.current_task()
         try:
             # Buffer live diffs while the REST snapshot is in flight.
             snapshot = await self.read('/fapi/v1/depth', {'symbol':symbol,'limit':1000})
             now = int(time.time()*1000)
-            book = self.books[symbol]
+            # A late REST response belongs only to the feed generation that
+            # requested it. Never seed a replacement book after reconnect.
+            if self.books.get(symbol) is not book:
+                return
             book.seed(snapshot,now)
             self.record({'e':'depthSnapshot','s':symbol,**snapshot})
             await self.record_event({'e':'depthSnapshot','s':symbol,**snapshot},'rest_snapshot')
@@ -130,7 +141,56 @@ class Collector:
             logging.warning('Depth snapshot %s: %s',symbol,type(exc).__name__)
             self.errors += 1
         finally:
-            self.snapshot_tasks.pop(symbol,None)
+            if self.snapshot_tasks.get(symbol) is task:
+                self.snapshot_tasks.pop(symbol,None)
+
+    async def reset_depth_feed(self, symbols, status):
+        for symbol in symbols:
+            if symbol in self.books:
+                self.books[symbol].invalidate()
+        tasks = {s:self.snapshot_tasks[s] for s in symbols if s in self.snapshot_tasks}
+        for task in tasks.values():
+            task.cancel()
+        await asyncio.gather(*tasks.values(),return_exceptions=True)
+        for symbol,task in tasks.items():
+            if self.snapshot_tasks.get(symbol) is task:
+                self.snapshot_tasks.pop(symbol,None)
+        for symbol in symbols:
+            if symbol in self.books:
+                self.books[symbol].invalidate()
+            if status == 'connected':
+                self.books[symbol] = DepthBook()
+            self.buffers[symbol] = deque(maxlen=10000)
+        await self.record_event({'e':'depthStatus','s':'','symbols':list(symbols),
+                                 'status':status},'control')
+        if symbols:
+            try:
+                await asyncio.to_thread(self.bus.client.delete,
+                    *(f'quant:lab:{kind}:{s}' for s in symbols for kind in ('book','liquidity')))
+            except Exception:
+                # Redis failure must not kill source ingestion or replace the
+                # reconnect path; cached execution depth also expires in 3s.
+                self.errors += 1
+
+    async def accept_depth(self, event, received_ns):
+        symbol, now = event['s'],received_ns//1000000
+        await self.record_event(event,received_ns=received_ns)
+        book = self.books[symbol]
+        self.event_ms[symbol] = int(event.get('E',now))
+        if symbol in self.snapshot_tasks:
+            self.buffers[symbol].append((event,now))
+        elif book.last is None:
+            self.seed_needed(symbol)
+            self.buffers[symbol].append((event,now))
+        else:
+            previous, gaps = book.last, book.gaps
+            book.apply(event,now)
+            if book.gaps > gaps:
+                await self.record_event({'e':'depthStatus','s':symbol,
+                    'status':'sequence_gap','previous_u':previous,
+                    **{k:event[k] for k in ('U','u','pu')}},'control')
+            if book.last is None or now-book.snapshot_ms > 60000:
+                self.seed_needed(symbol)
 
     def seed_needed(self,symbol):
         if symbol not in self.snapshot_tasks:
@@ -275,48 +335,37 @@ class Collector:
             try:
                 streams = '/'.join(f'{s.lower()}@{kind}' for s in symbols for kind in ('bookTicker','depth@100ms'))
                 async with self.session.ws_connect('wss://fstream.binance.com/public/stream?streams='+streams,heartbeat=20) as ws:
-                    now = int(time.time()*1000)
-                    for s in symbols:
-                        self.books[s] = DepthBook()
-                        self.seed_needed(s)
+                    await self.reset_depth_feed(symbols,'connected')
                     while True:
                         frame = await asyncio.wait_for(ws.receive(),timeout=15)
                         if frame.type != aiohttp.WSMsgType.TEXT:
                             raise ConnectionError('Microstructure connection closed')
                         payload = json.loads(frame.data)
                         event = payload.get('data',payload)
-                        now = int(time.time()*1000)
+                        received_ns = time.time_ns()
+                        now = received_ns//1000000
                         s = event.get('s')
                         if s not in symbols:
                             continue
                         self.record(event)
-                        await self.record_event(event)
                         kind = event.get('e')
+                        if kind == 'depthUpdate':
+                            await self.accept_depth(event,received_ns)
+                        else:
+                            await self.record_event(event,received_ns=received_ns)
                         if kind == 'aggTrade' and not self.cfg.all_market_trades:
                             self.builder.trade(event,now)
-                        elif kind == 'depthUpdate':
-                            book = self.books[s]
-                            self.event_ms[s] = int(event.get('E',now))
-                            if s in self.snapshot_tasks:
-                                self.buffers[s].append((event,now))
-                            elif book.last is None:
-                                self.seed_needed(s)
-                                self.buffers[s].append((event,now))
-                            else:
-                                book.apply(event,now)
-                                if book.last is None or now-book.snapshot_ms > 60000:
-                                    self.seed_needed(s)
                         elif kind == 'bookTicker':
                             # Archive best-quote events independently from reconstructed depth.
                             self.quote_count = getattr(self,'quote_count',0)+1
                         delay = 1
             except asyncio.CancelledError:
+                await self.reset_depth_feed(symbols,'disconnected')
                 raise
             except Exception as exc:
                 logging.warning('Microstructure stream: %s',type(exc).__name__)
                 self.reconnects += 1
-                for s in symbols:
-                    self.books[s].ready = False
+                await self.reset_depth_feed(symbols,'disconnected')
             await asyncio.sleep(delay)
             delay = min(30,delay*2)
 
@@ -334,7 +383,16 @@ class Collector:
             updates = []
             for symbol in self.selected:
                 book = self.books.get(symbol)
-                if not book or not book.ready or revisions.get(symbol)==book.last:
+                if not book or not book.ready:
+                    if symbol in revisions:
+                        try:
+                            await asyncio.to_thread(self.bus.client.delete,
+                                'quant:lab:book:'+symbol,'quant:lab:liquidity:'+symbol)
+                            revisions.pop(symbol,None)
+                        except Exception:
+                            self.errors += 1
+                    continue
+                if revisions.get(symbol)==book.last:
                     continue
                 try:
                     liquidity = book.metrics(now,self.cfg.depth_bps)

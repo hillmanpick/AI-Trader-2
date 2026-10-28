@@ -173,6 +173,19 @@ def test_event_replay_fails_missing_depth_gaps_and_unclosed_positions(tmp_path):
     assert 'unclosed_position_or_pending_order_at_end' in report['invalid_reasons']
 
 
+def test_depth_reset_while_holding_rejects_model_proof(tmp_path):
+    events = market_events()
+    events.append(ev('depthStatus',67001,symbol='',source='control',
+                     symbols=['BTCUSDT'],status='disconnected'))
+    events.sort(key=lambda e:e['received_ns'])
+    replay = ModelEventReplay(OrderJournal(tmp_path/'depth-reset.db'),model(),policy(),
+                              65000*1000000,160000*1000000)
+    report = replay.report(events)
+    assert not report['valid']
+    assert 'depth_feed_reset_while_holding' in report['invalid_reasons']
+    assert not validation_passes(report)
+
+
 @pytest.mark.parametrize('fault', ['stale_depth', 'missing_requested_depth'])
 def test_portfolio_proof_preserves_underlying_book_failure(tmp_path, fault):
     events = market_events()

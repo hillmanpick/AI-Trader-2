@@ -72,7 +72,12 @@ class HistoricalBookReplay:
         # Trade/diff identities are monotone in each live feed; backfills do not
         # generate retroactive maker fills or rewrite earlier trading decisions.
         trade = None
-        if kind=='depthSnapshot':
+        if kind=='depthStatus':
+            for s in p.get('symbols', [symbol] if symbol else []):
+                if s in self.books:
+                    self.books[s].invalidate()
+                self.buffers[s].clear()
+        elif kind=='depthSnapshot':
             stats['snapshots'] += 1
             book = self.books.setdefault(symbol,DepthBook())
             book.seed(p,now//1000000)
@@ -163,7 +168,8 @@ def main():
         rejected = False
         try:
             report = replay.run(lake.iter_events(args.start_ms*1000000,args.end_ms*1000000,
-                              symbols or None,{'depthSnapshot','depthUpdate','trade'}))
+                              (symbols|{''}) if symbols else None,
+                              {'depthSnapshot','depthUpdate','trade','depthStatus'}))
         except ReplayValidationError as exc:
             report, rejected = exc.report, True
     report['requested_window'] = {'start_ms':args.start_ms,'end_ms':args.end_ms,'symbols':sorted(symbols)}

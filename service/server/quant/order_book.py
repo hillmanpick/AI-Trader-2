@@ -35,6 +35,12 @@ class DepthBook:
         self.ofi.clear()
         self.ofi_started_ms = None
 
+    def invalidate(self):
+        """A disconnected feed cannot keep a matchable or feature-ready book."""
+        self.ready, self.bridged, self.last = False, False, None
+        self.ofi.clear()
+        self.ofi_started_ms = None
+
     def apply(self, event, received_ms):
         if self.last is None:
             return False
