@@ -26,6 +26,7 @@ def payload(model_ready=False):
         "event_history": {"format": "Parquet/ZSTD events-v2", "rows": 10,
                            "bytes": 100, "max_bytes": 1000,
                            "clickhouse": {"configured": False}},
+        "event_replay": {"strict": True, "valid": True, "sequence_gaps": 0, "events": 10},
     }, {
         "config": {"paper_dynamic_leverage": True, "paper_margin": 2000,
                    "paper_max_margin": 6000, "paper_major_max_leverage": 100,

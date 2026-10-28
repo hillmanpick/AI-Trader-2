@@ -60,6 +60,12 @@ def main():
           and int(event_history.get("bytes") or 0) <= int(event_history.get("max_bytes") or 0),
           "event_lake_bounded", {"rows": event_history.get("rows"),
           "bytes": event_history.get("bytes"), "max_bytes": event_history.get("max_bytes")})
+    replay = lab.get("event_replay") or {}
+    check(report, replay.get("strict") is True and replay.get("valid") is True
+          and int(replay.get("sequence_gaps") or 0) == 0,
+          "strict_book_replay", {"strict": replay.get("strict"),
+          "valid": replay.get("valid"), "sequence_gaps": replay.get("sequence_gaps"),
+          "events": replay.get("events")})
     model = lab.get("model") or {}
     check(report, model.get("ready") is True, "model_oos_gate", model)
     check(report, paper_config.get("paper_dynamic_leverage") is True
