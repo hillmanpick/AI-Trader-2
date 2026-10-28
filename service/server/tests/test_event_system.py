@@ -79,6 +79,17 @@ def test_market_ioc_walks_depth_partially_fills_and_never_reuses_liquidity(tmp_p
     assert stats['partial_orders']==1
 
 
+def test_depth_metrics_accumulate_intermediate_best_queue_flow():
+    b = DepthBook()
+    b.seed({'lastUpdateId':100,'bids':[['99','10']],'asks':[['101','10']]},0)
+    b.apply({'U':100,'u':101,'pu':99,'b':[['99','20']],'a':[]},1000)
+    b.apply({'U':102,'u':102,'pu':101,'b':[['99','10']],'a':[]},3000)
+    b.apply({'U':103,'u':103,'pu':102,'b':[['99','30']],'a':[]},6000)
+    metrics = b.metrics(6001)
+    assert metrics['ofi_ready'] and metrics['ofi_events'] == 2
+    assert metrics['ofi_5s'] == pytest.approx(10/15)
+
+
 def test_passive_limit_uses_trade_queue_and_cancel_can_lose_race(tmp_path):
     journal = OrderJournal(tmp_path/'orders.db')
     broker = SimulatedBroker(journal,ack_ms=0,cancel_ms=20,participation=1)
@@ -305,3 +316,8 @@ def test_clickhouse_export_is_checksummed_and_idempotent(tmp_path):
     queries = [call.kwargs.get('params',{}).get('query','') for call in session.post.call_args_list]
     assert any('CREATE TABLE IF NOT EXISTS' in query for query in queries)
     assert any('INSERT INTO quant.events FORMAT Parquet' in query for query in queries)
+
+    # A second table on the same endpoint must receive its own export; the
+    # catalog target is endpoint + database + table, not only the URL.
+    with patch.object(requests,'Session',return_value=session):
+        assert lake.export_clickhouse('http://clickhouse:8123', table='other_events') == 1

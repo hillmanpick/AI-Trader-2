@@ -191,7 +191,8 @@ def test_feature_warmup_future_frames_trade_gaps_and_causality():
     b = FeatureBuilder()
     base = 100000
     book = {'mid':100,'bid':99.99,'ask':100.01,'bid_qty':10,'ask_qty':10,
-            'spread_bps':2,'imbalance':0,'bid_depth':1e6,'ask_depth':1e6}
+            'spread_bps':2,'imbalance':0,'bid_depth':1e6,'ask_depth':1e6,
+            'ofi_5s':0.0,'ofi_events':12,'ofi_ready':True}
     for i in range(15):
         now = base+i*5000
         b.trade({'s':'BTCUSDT','a':i,'p':100,'q':1,'m':False,'T':now},now)

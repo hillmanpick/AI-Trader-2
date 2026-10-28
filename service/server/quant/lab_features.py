@@ -2,7 +2,7 @@
 import math
 from collections import defaultdict, deque
 
-SCHEMA = 'microstructure-v2'
+SCHEMA = 'microstructure-v3'
 FEATURES = ('return_5s', 'return_30s', 'return_60s', 'ewma_volatility',
             'spread_bps', 'depth_imbalance', 'ofi', 'trade_imbalance',
             'log_trade_volume', 'volume_anomaly', 'btc_return_60s',
@@ -13,7 +13,6 @@ class FeatureBuilder:
     def __init__(self):
         self.history = defaultdict(lambda: deque(maxlen=900))
         self.trades = defaultdict(lambda: deque(maxlen=20000))
-        self.previous = {}
         self.last_trade = {}
         self.trade_gaps = defaultdict(int)
         self.bad_until = {}
@@ -64,14 +63,9 @@ class FeatureBuilder:
         total = sum(q for q,_ in recent)
         imbalance = sum(q*side for q,side in recent)/total if total else 0
         baseline = sum(q for t,q,_ in trades if t <= now)/12
-        previous = self.previous.get(symbol, book)
-        # Best-quote OFI (price changes and queue changes), normalized by size.
-        ofi = ((book['bid_qty'] if book['bid'] >= previous['bid'] else 0)
-               -(previous['bid_qty'] if book['bid'] <= previous['bid'] else 0)
-               -(book['ask_qty'] if book['ask'] <= previous['ask'] else 0)
-               +(previous['ask_qty'] if book['ask'] >= previous['ask'] else 0))
-        ofi /= max(book['bid_qty']+book['ask_qty'], 1e-12)
-        self.previous[symbol] = dict(book)
+        if not book.get('ofi_ready'):
+            raise ValueError('Event OFI needs five seconds of continuous depth')
+        ofi = book['ofi_5s']
         btc = self.history['BTCUSDT']
         btc_prior = next((p for t,p in reversed(btc) if t <= now-60000), None)
         if not btc or not btc_prior or now-btc[-1][0] > 10000:

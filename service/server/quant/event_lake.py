@@ -247,8 +247,11 @@ class EventLake:
         """Optional external sink. Insert tokens make retries of a segment idempotent."""
         import re
         import requests
-        if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',database+table):
+        if not all(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',name) for name in (database,table)):
             raise ValueError('Invalid ClickHouse identifier')
+        # The same endpoint can host many independent archives. Hashing also
+        # keeps URL credentials out of the catalog target identifier.
+        target = hashlib.sha256(json.dumps([url.rstrip('/'),database,table]).encode()).hexdigest()
         session = requests.Session()
         session.trust_env = False
         if username:
@@ -268,7 +271,7 @@ class EventLake:
         exported = 0
         for s in self.segments():
             with self.connect() as c:
-                done = c.execute('SELECT 1 FROM exports WHERE path=? AND target=?',(s['path'],url)).fetchone()
+                done = c.execute('SELECT 1 FROM exports WHERE path=? AND target=?',(s['path'],target)).fetchone()
             if done:
                 continue
             path = self.directory/s['path']
@@ -278,6 +281,6 @@ class EventLake:
                 query(f'INSERT INTO {database}.{table} FORMAT Parquet',body,
                       {'insert_deduplication_token':s['sha256']})
             with self.connect() as c:
-                c.execute('INSERT OR REPLACE INTO exports VALUES (?,?,?)',(s['path'],url,time.time_ns()))
+                c.execute('INSERT OR REPLACE INTO exports VALUES (?,?,?)',(s['path'],target,time.time_ns()))
             exported += 1
         return exported

@@ -1,5 +1,6 @@
 """USD-M diff-depth reconstruction. Invalid books never produce features."""
 import math
+from collections import deque
 
 
 class DepthBook:
@@ -11,6 +12,8 @@ class DepthBook:
         self.gaps = 0
         self.updated_ms = 0
         self.snapshot_ms = 0
+        self.ofi = deque()
+        self.ofi_started_ms = None
 
     @staticmethod
     def levels(rows):
@@ -29,6 +32,8 @@ class DepthBook:
         self.ready, self.bridged = False, False
         self.updated_ms = received_ms
         self.snapshot_ms = received_ms
+        self.ofi.clear()
+        self.ofi_started_ms = None
 
     def apply(self, event, received_ms):
         if self.last is None:
@@ -41,7 +46,10 @@ class DepthBook:
         if not valid:
             self.ready, self.last = False, None
             self.gaps += 1
+            self.ofi.clear()
+            self.ofi_started_ms = None
             return False
+        previous = self.best_quote() if self.ready else None
         for target, key in ((self.bids, 'b'), (self.asks, 'a')):
             for p, q in event[key]:
                 p, q = float(p), float(q)
@@ -54,6 +62,22 @@ class DepthBook:
                     target.pop(p, None)
         self.last, self.updated_ms, self.bridged = end, received_ms, True
         self.ready = bool(self.bids and self.asks and max(self.bids) < min(self.asks))
+        if self.ready and received_ms >= self.snapshot_ms:
+            quote = self.best_quote()
+            if self.ofi_started_ms is None:
+                self.ofi_started_ms = received_ms
+            if previous is not None:
+                bid, bid_qty, ask, ask_qty = quote
+                old_bid, old_bid_qty, old_ask, old_ask_qty = previous
+                flow = ((bid_qty if bid >= old_bid else 0)
+                        -(old_bid_qty if bid <= old_bid else 0)
+                        -(ask_qty if ask <= old_ask else 0)
+                        +(old_ask_qty if ask >= old_ask else 0))
+                self.ofi.append((received_ms,flow,(bid_qty+ask_qty)/2))
+            self.prune_ofi(received_ms)
+        elif not self.ready:
+            self.ofi.clear()
+            self.ofi_started_ms = None
         # Retain only the nearest levels; snapshots refresh every 60 seconds.
         if len(self.bids) > 2000:
             self.bids = dict(sorted(self.bids.items(), reverse=True)[:1500])
@@ -61,10 +85,24 @@ class DepthBook:
             self.asks = dict(sorted(self.asks.items())[:1500])
         return self.ready
 
+    def best_quote(self):
+        bid, ask = max(self.bids), min(self.asks)
+        return bid,self.bids[bid],ask,self.asks[ask]
+
+    def prune_ofi(self, now_ms):
+        while self.ofi and self.ofi[0][0] <= now_ms-5000:
+            self.ofi.popleft()
+
     def metrics(self, now_ms, bps=10):
         if not self.ready or now_ms-self.updated_ms > 2000 or now_ms-self.snapshot_ms > 65000:
             raise ValueError('Depth unavailable, stale or sequence gap')
         bid, ask = max(self.bids), min(self.asks)
+        self.prune_ofi(now_ms)
+        # Sum every valid diff's best-queue contribution, not just sampled
+        # endpoints. Future buffered frames never enter an earlier feature.
+        flows = [r for r in self.ofi if r[0] <= now_ms]
+        average_queue = sum(r[2] for r in flows)/len(flows) if flows else 0
+        ofi = sum(r[1] for r in flows)/average_queue if average_queue else 0
         mid = (bid+ask)/2
         lower, upper = mid*(1-bps/10000), mid*(1+bps/10000)
         # If snapshot coverage is thinner than the requested band, do not
@@ -77,6 +115,8 @@ class DepthBook:
                 'bid_depth': sell, 'ask_depth': buy, 'depth_bps': bps,
                 'imbalance': (sell-buy)/(sell+buy) if sell+buy else 0,
                 'depth_lower_bound':truncated,
+                'ofi_5s':ofi,'ofi_events':len(flows),
+                'ofi_ready':self.ofi_started_ms is not None and now_ms-self.ofi_started_ms >= 5000,
                 'bid_coverage_bps':(mid-min(self.bids))/mid*10000,
                 'ask_coverage_bps':(max(self.asks)-mid)/mid*10000,
                 'updated_ms': self.updated_ms, 'sequence': self.last}
