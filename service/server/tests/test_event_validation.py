@@ -173,6 +173,25 @@ def test_event_replay_fails_missing_depth_gaps_and_unclosed_positions(tmp_path):
     assert 'unclosed_position_or_pending_order_at_end' in report['invalid_reasons']
 
 
+@pytest.mark.parametrize('fault', ['stale_depth', 'missing_requested_depth'])
+def test_portfolio_proof_preserves_underlying_book_failure(tmp_path, fault):
+    events = market_events()
+    replay = ModelEventReplay(OrderJournal(tmp_path/'book-fault.db'),model(),policy(),
+                              65000*1000000,160000*1000000)
+    if fault == 'stale_depth':
+        # Trades continue to the window end, but no new book arrives for 5s.
+        events = [e for e in events if not (e['kind'] in ('depthSnapshot','depthUpdate')
+                  and e['received_ns']>155000*1000000)]
+        expected = 'stale_depth_at_end:BTCUSDT'
+    else:
+        replay.expected_symbols = {'BTCUSDT','ETHUSDT'}
+        expected = 'missing_requested_depth:ETHUSDT'
+    report = replay.report(events)
+    assert not report['valid']
+    assert expected in report['invalid_reasons']
+    assert not validation_passes(report)
+
+
 def test_model_holdout_rejects_refit_and_changed_artifact_or_missing_lake(tmp_path):
     lake = EventLake(tmp_path)
     with pytest.raises(ValueError,match='boundary'):
@@ -226,6 +245,18 @@ def test_model_gate_binds_weights_policy_and_complete_event_proof(tmp_path):
     path.write_text(json.dumps(candidate))
     with patch('quant.execution_policy.current_policy',return_value=policy() | {'paper_max_leverage':50}):
         assert not model_status(LabConfig(directory=str(tmp_path)),now=2000)[0]['ready']
+
+
+def test_configured_major_cap_is_bound_to_validation_policy():
+    from dataclasses import replace
+    from quant.execution_policy import policy_for_settings
+    from quant.settings import Settings
+    settings = Settings(paper_major_max_leverage=40)
+    cfg = policy_for_settings(settings)
+    assert settings.public()['paper_major_max_leverage']==40
+    assert leverage_bounds(cfg,'BTCUSDT')==(2,40)
+    assert leverage_bounds(cfg,'SOLUSDT')==(2,20)
+    assert fingerprint(cfg)!=fingerprint(policy_for_settings(replace(settings,paper_major_max_leverage=50)))
 
 
 def test_dynamic_leverage_caps_btc_eth_at_100_but_keeps_altcoin_cap():

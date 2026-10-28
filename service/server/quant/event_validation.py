@@ -205,6 +205,9 @@ class ModelEventReplay(HistoricalBookReplay):
 
     def report(self, events):
         base = super().run(events)
+        # Portfolio metrics must never erase an incomplete underlying market
+        # replay (for example, a book that went stale after the last fill).
+        self.invalid.extend(base['invalid_reasons'])
         if self.positions or self.pending:
             self.invalid.append('unclosed_position_or_pending_order_at_end')
         if not self.reconstructed or self.measured_gaps:
