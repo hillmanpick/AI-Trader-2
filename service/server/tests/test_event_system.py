@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-from quant.event_lake import EventLake,envelope
+from quant.event_lake import EventLake,envelope,decode_row
 from quant.execution_state import OrderJournal,SimulatedBroker
 from quant.book_replay import HistoricalBookReplay, ReplayValidationError
 from quant.order_book import DepthBook
@@ -38,12 +38,28 @@ def test_parquet_preserves_exact_trade_ids_decimal_strings_and_time_order(tmp_pa
     assert rows[0]['payload']['p'] == '0.0000012300'
     assert rows[0]['payload']['q'] == '123456.123400'
     assert rows[0]['payload']['t'] == 123
+    import pyarrow.parquet as pq
+    stored = pq.read_table(lake.directory/lake.segments()[0]['path'])
+    assert stored.schema.field('trade_time_ms')
+    assert stored.column('trade_time_ms').to_pylist()[0] == 1999
+    assert stored.column('payload').to_pylist()[0] == '{}'
     assert lake.checkpoints()['BTCUSDT'] == 124
     path = lake.directory/lake.segments()[0]['path']
     with open(path,'ab') as f:
         f.write(b'corrupt')
     with pytest.raises(ValueError,match='checksum'):
         list(lake.iter_events())
+
+
+def test_v1_trade_payload_remains_readable_after_typed_column_upgrade():
+    row = {'event_id':'trade:BTCUSDT:7','kind':'trade','symbol':'BTCUSDT',
+           'event_ms':1000,'received_ns':1000000000,'monotonic_ns':1000000000,
+           'source':'websocket','aggregate_id':None,'first_trade_id':7,
+           'last_trade_id':7,'price':'10.00','quantity':'1.00','buyer_maker':False,
+           'payload':'{"T":999}'}
+    decoded = decode_row(row)
+    assert decoded['payload']['T'] == 999
+    assert decoded['payload']['t'] == 7
 
 
 def test_parquet_orphan_recovery_and_retention_are_auditable(tmp_path):

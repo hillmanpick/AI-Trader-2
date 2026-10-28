@@ -19,7 +19,7 @@ def export_once(cfg=None):
         username=os.getenv('QUANT_CLICKHOUSE_USER', ''),
         password=os.getenv('QUANT_CLICKHOUSE_PASSWORD', ''),
     )
-    return {'exported_segments': count, 'format': 'Parquet/ZSTD events-v1'}
+    return {'exported_segments': count, 'format': 'Parquet/ZSTD events-v2 (v1 readable)'}
 
 
 def main():

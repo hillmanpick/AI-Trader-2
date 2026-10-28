@@ -34,8 +34,10 @@ def arrow_schema():
         ('source',pa.string()),('aggregate_id',pa.int64()),('first_trade_id',pa.int64()),
         ('last_trade_id',pa.int64()),('price',pa.string()),('quantity',pa.string()),
         ('buyer_maker',pa.bool_()),('first_update_id',pa.int64()),
-        ('last_update_id',pa.int64()),('previous_update_id',pa.int64()),('payload',pa.string()),
-    ],metadata={b'quant.schema':b'events-v1',b'quant.trade_semantics':b'individual-trade-and-explicit-aggregate'})
+        ('last_update_id',pa.int64()),('previous_update_id',pa.int64()),
+        ('trade_time_ms',pa.int64()),('payload',pa.string()),
+    ],metadata={b'quant.schema':b'events-v2',b'quant.trade_semantics':b'individual-trade-and-explicit-aggregate',
+                b'quant.trade_time':b'typed-column'})
 
 
 def column_row(event):
@@ -43,14 +45,17 @@ def column_row(event):
     row = {k:event[k] for k in ('event_id','kind','symbol','event_ms','received_ns','monotonic_ns','source')}
     row |= {'aggregate_id':None,'first_trade_id':None,'last_trade_id':None,'price':None,
             'quantity':None,'buyer_maker':None,'first_update_id':None,'last_update_id':None,
-            'previous_update_id':None}
+            'previous_update_id':None,'trade_time_ms':None}
     if event['kind'] in ('trade','aggTrade'):
         first,last = (int(p['t']),int(p['t'])) if event['kind']=='trade' else (int(p['f']),int(p['l']))
         row.update(aggregate_id=int(p['a']) if event['kind']=='aggTrade' else None,first_trade_id=first,last_trade_id=last,
                    price=str(p['p']),quantity=str(p['q']),buyer_maker=bool(p['m']))
-        # Common trade fields become typed columns, rather than repeated JSON.
+        # Keep the exchange trade timestamp typed; only uncommon source fields
+        # remain in JSON. This avoids repeating a one-field JSON object millions
+        # of times while preserving non-standard flags for replay diagnostics.
         extras = {k:v for k,v in p.items() if k not in ('e','s','E','T','t','a','f','l','p','q','m')}
-        row['payload'] = json.dumps({'T':int(p['T']),**extras},separators=(',',':'),allow_nan=False)
+        row['trade_time_ms'] = int(p['T'])
+        row['payload'] = json.dumps(extras,separators=(',',':'),allow_nan=False)
     else:
         for key,field in (('U','first_update_id'),('u','last_update_id'),('pu','previous_update_id')):
             if key in p:
@@ -60,8 +65,14 @@ def column_row(event):
 
 
 def decode_row(row):
-    p = json.loads(row['payload'])
+    p = json.loads(row.get('payload') or '{}')
     if row['kind'] in ('trade','aggTrade'):
+        trade_time = row.get('trade_time_ms')
+        if trade_time is None:
+            # v1 segments stored T in the payload; keep them readable after
+            # the v2 typed-column schema is deployed.
+            trade_time = p.pop('T',row['event_ms'])
+        p['T'] = int(trade_time)
         p |= {'e':row['kind'],'s':row['symbol'],'E':row['event_ms'],'p':row['price'],
               'q':row['quantity'],'m':row['buyer_maker']}
         if row['kind']=='trade':
@@ -252,7 +263,7 @@ class EventLake:
             kinds = [dict(r) for r in c.execute('SELECT kind,status,COUNT(*) count FROM gaps GROUP BY kind,status')]
             symbols = c.execute('SELECT COUNT(*) FROM checkpoints').fetchone()[0]
         return dict(row) | {'symbols_with_durable_trades':symbols,'gaps':kinds,
-                            'format':'Parquet/ZSTD events-v1','max_bytes':self.max_bytes}
+                            'format':'Parquet/ZSTD events-v2 (v1 readable)','max_bytes':self.max_bytes}
 
     def export_status(self, url='', database='quant', table='events'):
         """Local checkpoints for retained segments; never probes the remote sink."""
@@ -304,8 +315,10 @@ class EventLake:
             event_ms Int64,received_ns Int64,monotonic_ns Int64,source LowCardinality(String),
             aggregate_id Nullable(Int64),first_trade_id Nullable(Int64),last_trade_id Nullable(Int64),
             price Nullable(String),quantity Nullable(String),buyer_maker Nullable(Bool),
-            first_update_id Nullable(Int64),last_update_id Nullable(Int64),previous_update_id Nullable(Int64),payload String)
+            first_update_id Nullable(Int64),last_update_id Nullable(Int64),previous_update_id Nullable(Int64),
+            trade_time_ms Nullable(Int64),payload String)
             ENGINE=ReplacingMergeTree ORDER BY (symbol,kind,received_ns,event_id)''')
+        query(f'ALTER TABLE {database}.{table} ADD COLUMN IF NOT EXISTS trade_time_ms Nullable(Int64)')
         exported = 0
         for s in self.segments():
             with self.connect() as c:
