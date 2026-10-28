@@ -9,6 +9,7 @@ import json
 import math
 import sqlite3
 import time
+import threading
 from contextlib import contextmanager
 from decimal import Decimal
 
@@ -41,6 +42,7 @@ def percentile(values,p):
 class OrderJournal:
     def __init__(self,path):
         self.path = str(path)
+        self._local = threading.local()
         with self.connect() as c:
             c.executescript('''PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS execution_orders (
@@ -49,10 +51,16 @@ class OrderJournal:
                     seq INTEGER PRIMARY KEY, order_id TEXT, at_ns INTEGER, state TEXT, detail TEXT);
                 CREATE TABLE IF NOT EXISTS execution_fills (
                     id TEXT PRIMARY KEY, order_id TEXT, at_ns INTEGER, quantity TEXT, price TEXT, fee TEXT);
+                CREATE TABLE IF NOT EXISTS execution_match_state (
+                    id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
             ''')
 
     @contextmanager
     def connect(self):
+        active = getattr(self._local,'connection',None)
+        if active is not None:
+            yield active
+            return
         c = sqlite3.connect(self.path,timeout=15)
         c.row_factory = sqlite3.Row
         try:
@@ -60,6 +68,29 @@ class OrderJournal:
                 yield c
         finally:
             c.close()
+
+    @contextmanager
+    def transaction(self):
+        """One event commits its fills, queue updates and matcher cursor together."""
+        if getattr(self._local,'connection',None) is not None:
+            raise RuntimeError('Nested matcher transaction')
+        with self.connect() as c:
+            c.execute('BEGIN IMMEDIATE')
+            self._local.connection = c
+            try:
+                yield c
+            finally:
+                self._local.connection = None
+
+    def match_state(self):
+        with self.connect() as c:
+            row = c.execute('SELECT body FROM execution_match_state WHERE id=1').fetchone()
+        return json.loads(row[0]) if row else {'consumed':[],'last_trade':{}}
+
+    def save_match_state(self,body):
+        with self.connect() as c:
+            c.execute('INSERT INTO execution_match_state VALUES (1,?) '
+                      'ON CONFLICT(id) DO UPDATE SET body=excluded.body',(body,))
 
     def get(self,identity):
         with self.connect() as c:
@@ -92,7 +123,8 @@ class OrderJournal:
     def change(self,order,new_state,at_ns,detail=None,fill=None,on_fill=None):
         """CAS state transition and optional fill/ledger callback in one transaction."""
         with self.connect() as c:
-            c.execute('BEGIN IMMEDIATE')
+            if not c.in_transaction:
+                c.execute('BEGIN IMMEDIATE')
             stored = c.execute('SELECT body FROM execution_orders WHERE id=?',(order['id'],)).fetchone()
             if not stored:
                 raise ValueError('Order does not exist')
@@ -132,7 +164,8 @@ class OrderJournal:
 
     def metadata(self,identity,values):
         with self.connect() as c:
-            c.execute('BEGIN IMMEDIATE')
+            if not c.in_transaction:
+                c.execute('BEGIN IMMEDIATE')
             order = json.loads(c.execute('SELECT body FROM execution_orders WHERE id=?',(identity,)).fetchone()[0])
             if any(k in values for k in ('id','state','filled','quantity','notional','submitted_ns','updated_ns')):
                 raise ValueError('Execution invariants cannot be changed by metadata')
@@ -163,8 +196,15 @@ class SimulatedBroker:
         self.fee_rate,self.participation = number(fee_rate),number(participation)
         self.slippage = number(slippage)
         self.has_active = bool(journal.orders(active=True))
-        self.consumed = {}
-        self.last_trade = {}
+        state = journal.match_state()
+        self.consumed = {(s,revision,side,price):number(qty)
+                         for s,revision,side,price,qty in state['consumed']}
+        self.last_trade = state['last_trade']
+        self._checkpoint = self._match_state_json()
+
+    def _match_state_json(self):
+        return json.dumps({'consumed':[[*key,str(qty)] for key,qty in sorted(self.consumed.items())],
+                           'last_trade':self.last_trade},sort_keys=True,allow_nan=False)
 
     def submit(self,identity,symbol,side,quantity,at_ns,order_type='MARKET',limit_price=None,tif='IOC',reduce_only=False,metadata=None):
         if side not in (-1,1) or number(quantity)<=0 or order_type not in ('MARKET','LIMIT') or tif not in ('IOC','GTC'):
@@ -209,6 +249,22 @@ class SimulatedBroker:
         started = time.perf_counter_ns()
         if not self.has_active:
             return time.perf_counter_ns()-started
+        previous = self.consumed.copy(),self.last_trade.copy(),self.has_active
+        try:
+            with self.journal.transaction():
+                self._match_event(at_ns,books,trade)
+                checkpoint = self._match_state_json()
+                if checkpoint != self._checkpoint:
+                    self.journal.save_match_state(checkpoint)
+            self._checkpoint = checkpoint
+        except BaseException:
+            # SQLite rolled back all callbacks and journal changes. Restore the
+            # in-memory mirror too, so retrying cannot lose or reuse liquidity.
+            self.consumed,self.last_trade,self.has_active = previous
+            raise
+        return time.perf_counter_ns()-started
+
+    def _match_event(self,at_ns,books,trade=None):
         trade_remaining = number(trade['q']) if trade else number(0)
         trade_identity = (trade['s'],int(trade['t'])) if trade else None
         if trade_identity and trade_identity[1]<=self.last_trade.get(trade_identity[0],-1):
@@ -219,7 +275,7 @@ class SimulatedBroker:
         orders = sorted(self.journal.orders(active=True),key=lambda o:(o['submitted_ns'],o['id']))
         if not orders:
             self.has_active = False
-            return time.perf_counter_ns()-started
+            return
         for order in orders:
             if at_ns < order['submitted_ns'] or order['state']=='UNKNOWN':
                 continue
@@ -292,6 +348,7 @@ class SimulatedBroker:
                     else:
                         with self.journal.connect() as c:
                             c.execute('UPDATE execution_orders SET body=? WHERE id=?',(json.dumps(order),order['id']))
-        # Retain only the most recent depth revision for each symbol/side.
-        self.consumed = {k:v for k,v in self.consumed.items() if k[0] in books and k[1]==books[k[0]].last}
-        return time.perf_counter_ns()-started
+        # A temporarily missing book must not erase its consumption checkpoint.
+        # Drop an old revision only after observing a strictly newer one.
+        self.consumed = {k:v for k,v in self.consumed.items()
+                         if k[0] not in books or books[k[0]].last is None or k[1]>=books[k[0]].last}

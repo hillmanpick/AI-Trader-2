@@ -145,6 +145,119 @@ def test_order_idempotency_restart_and_atomic_ledger_callback(tmp_path):
         assert c.execute('SELECT COUNT(*) FROM test_ledger').fetchone()[0]==1
 
 
+def test_restart_does_not_sell_the_same_displayed_liquidity_to_another_order(tmp_path):
+    path = tmp_path/'restart-depth.db'
+    journal = OrderJournal(path)
+    broker = SimulatedBroker(journal,ack_ms=0,participation=1)
+    b = book(0)
+    broker.submit('first','BTCUSDT',1,'10',0)
+    broker.on_event(0,{'BTCUSDT':b})
+    assert journal.get('first')['filled']=='5.0'
+    restarted = SimulatedBroker(OrderJournal(path),ack_ms=0,participation=1)
+    restarted.submit('second','BTCUSDT',1,'10',1000000)
+    restarted.on_event(1000000,{'BTCUSDT':b})
+    assert restarted.journal.get('second')['filled']=='0'
+    b.apply({'U':102,'u':102,'pu':101,'b':[],'a':[]},2)
+    restarted.submit('new-revision','BTCUSDT',1,'1',2000000)
+    restarted.on_event(2000000,{'BTCUSDT':b})
+    assert restarted.journal.get('new-revision')['state']=='FILLED'
+
+
+def test_restart_does_not_advance_a_passive_queue_twice_for_the_same_trade(tmp_path):
+    path = tmp_path/'restart-queue.db'
+    broker = SimulatedBroker(OrderJournal(path),ack_ms=0,participation=1)
+    broker.submit('maker','BTCUSDT',1,'2',0,order_type='LIMIT',limit_price='99',tif='GTC')
+    b = book(0)
+    broker.on_event(0,{'BTCUSDT':b})
+    trade = {'s':'BTCUSDT','t':1,'q':'4','p':'99','m':True}
+    broker.on_event(1000000,{'BTCUSDT':b},trade)
+    assert broker.journal.get('maker')['queue_ahead']=='1.0'
+    restarted = SimulatedBroker(OrderJournal(path),ack_ms=0,participation=1)
+    restarted.on_event(2000000,{'BTCUSDT':b},trade)
+    assert restarted.journal.get('maker')['queue_ahead']=='1.0'
+    assert restarted.journal.get('maker')['filled']=='0'
+    restarted.on_event(3000000,{'BTCUSDT':b},{**trade,'t':2,'q':'2'})
+    assert restarted.journal.get('maker')['filled']=='1.0'
+
+
+def test_missing_book_preserves_consumption_and_cancel_survives_restart(tmp_path):
+    path = tmp_path/'missing-book.db'
+    broker = SimulatedBroker(OrderJournal(path),ack_ms=0,cancel_ms=20,participation=1)
+    broker.submit('resting','BTCUSDT',1,'10',0,order_type='LIMIT',limit_price=102,tif='GTC')
+    b = book(0)
+    broker.on_event(0,{'BTCUSDT':b})
+    assert broker.journal.get('resting')['state']=='PARTIALLY_FILLED'
+    broker.on_event(1000000,{})
+    broker.cancel('resting',2000000)
+    restarted = SimulatedBroker(OrderJournal(path),ack_ms=0,cancel_ms=20,participation=1)
+    restarted.submit('second','BTCUSDT',1,'10',3000000)
+    restarted.on_event(3000000,{'BTCUSDT':b})
+    assert restarted.journal.get('second')['filled']=='0'
+    assert restarted.journal.get('resting')['filled']=='5.0'
+    restarted.on_event(22000000,{'BTCUSDT':b})
+    assert restarted.journal.get('resting')['state']=='CANCELED'
+    assert restarted.journal.statistics()['cancel']['p50_ms']==20
+
+
+def test_failed_multilevel_match_rolls_back_fills_ledger_and_checkpoints(tmp_path):
+    path = tmp_path/'rollback-match.db'
+    journal = OrderJournal(path)
+    with journal.connect() as c:
+        c.execute('CREATE TABLE ledger(id TEXT PRIMARY KEY)')
+    fail = True
+    def callback(c,fill,order):
+        c.execute('INSERT INTO ledger VALUES (?)',(fill['id'],))
+        if fail and fill['price']=='102.0':
+            raise RuntimeError('injected second-level callback failure')
+    broker = SimulatedBroker(journal,ack_ms=0,participation=1,on_fill=callback)
+    broker.submit('atomic','BTCUSDT',1,'10',0)
+    b = book(0)
+    with pytest.raises(RuntimeError,match='second-level'):
+        broker.on_event(1000000,{'BTCUSDT':b})
+    assert journal.get('atomic')['state']=='SUBMITTED'
+    assert journal.fills()==[]
+    assert broker.consumed=={} and broker.last_trade=={}
+    assert journal.match_state()=={'consumed':[],'last_trade':{}}
+    with journal.connect() as c:
+        assert c.execute('SELECT COUNT(*) FROM ledger').fetchone()[0]==0
+    fail = False
+    restarted = SimulatedBroker(OrderJournal(path),ack_ms=0,participation=1,on_fill=callback)
+    restarted.on_event(1000000,{'BTCUSDT':b})
+    assert restarted.journal.get('atomic')['filled']=='5.0'
+    assert len(restarted.journal.fills())==2
+
+
+def test_process_exit_mid_match_leaves_no_partial_commit(tmp_path):
+    import os
+    import subprocess
+    path = tmp_path/'crash.db'
+    script = '''
+import os,sys
+from quant.execution_state import OrderJournal,SimulatedBroker
+from quant.order_book import DepthBook
+journal=OrderJournal(sys.argv[1])
+def fail(c,fill,order):
+    if fill['price']=='102.0': os._exit(23)
+b=DepthBook()
+b.seed({'lastUpdateId':100,'bids':[['99','5']],'asks':[['101','2'],['102','3']]},0)
+b.apply({'U':100,'u':101,'pu':99,'b':[],'a':[]},0)
+broker=SimulatedBroker(journal,ack_ms=0,participation=1,on_fill=fail)
+broker.submit('crash','BTCUSDT',1,'10',0)
+broker.on_event(1000000,{'BTCUSDT':b})
+'''
+    env = os.environ | {'PYTHONPATH':str(Path(__file__).resolve().parents[1])}
+    result = subprocess.run([sys.executable,'-c',script,str(path)],env=env,timeout=15,
+                            capture_output=True,text=True)
+    assert result.returncode==23, result.stderr
+    journal=OrderJournal(path)
+    assert journal.get('crash')['state']=='SUBMITTED'
+    assert journal.fills()==[]
+    assert journal.match_state()=={'consumed':[],'last_trade':{}}
+    broker=SimulatedBroker(journal,ack_ms=0,participation=1)
+    broker.on_event(1000000,{'BTCUSDT':book(0)})
+    assert journal.get('crash')['filled']=='5.0'
+
+
 def test_book_replay_requires_snapshot_bridge_and_reports_measured_processing(tmp_path):
     lake = EventLake(tmp_path)
     ns = 1000000000
