@@ -14,7 +14,7 @@ from quant.lab_features import FeatureBuilder, FEATURES, SCHEMA
 from quant.lab_model import probabilities, model_status
 from quant.lab_replay import replay
 from quant.lab_store import LabStore
-from quant.lab_train import label_rows, partition, fit, train
+from quant.lab_train import label_rows, partition, fit, train, training_interval_seconds
 from quant.order_book import DepthBook
 from quant.strategies import dynamic_leverage_plan
 from quant.settings import Settings
@@ -40,6 +40,14 @@ def test_dynamic_leverage_falls_with_volatility_and_never_tightens_stop():
         plan(notional_cap=3999)
     with pytest.raises(ValueError,match='minimum leverage'):
         plan(remaining_risk=1)
+
+
+def test_training_watch_interval_is_bounded(monkeypatch):
+    monkeypatch.setenv('QUANT_LAB_TRAIN_INTERVAL_SECONDS', '900')
+    assert training_interval_seconds() == 900
+    monkeypatch.setenv('QUANT_LAB_TRAIN_INTERVAL_SECONDS', '299')
+    with pytest.raises(ValueError, match='between 300 and 86400'):
+        training_interval_seconds()
 
 
 def test_depth_bridge_duplicates_gap_rebuild_and_zero_deletion():

@@ -72,6 +72,7 @@ services:
       QUANT_ENABLED: "false"
       QUANT_LIVE_ENABLED: "false"
       QUANT_OBSERVATION_ONLY: "true"
+      QUANT_LAB_TRAIN_INTERVAL_SECONDS: ${QUANT_LAB_TRAIN_INTERVAL_SECONDS:-21600}
     command: [python, -m, quant.paper_worker]
     restart: unless-stopped
     volumes:

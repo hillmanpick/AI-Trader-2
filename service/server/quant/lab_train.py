@@ -18,6 +18,14 @@ from .event_validation import validate_candidate
 from .event_lake import EventLake
 
 
+def training_interval_seconds():
+    """Bound watch cadence so readiness is checked promptly but safely."""
+    interval = int(os.getenv('QUANT_LAB_TRAIN_INTERVAL_SECONDS', '21600'))
+    if not 300 <= interval <= 86400:
+        raise ValueError('Training interval must be between 300 and 86400 seconds')
+    return interval
+
+
 def label_rows(rows, horizon_ms):
     groups = defaultdict(list)
     for row in rows:
@@ -208,6 +216,7 @@ def main():
     parser.add_argument('--watch',action='store_true')
     args = parser.parse_args()
     cfg = LabConfig().validate()
+    interval = training_interval_seconds()
     while True:
         try:
             if not args.watch or cfg.auto_train:
@@ -216,7 +225,7 @@ def main():
             print(json.dumps({'status':'training_error','error':type(exc).__name__}),flush=True)
         if not args.watch:
             break
-        time.sleep(21600)
+        time.sleep(interval)
 
 
 if __name__ == '__main__':
