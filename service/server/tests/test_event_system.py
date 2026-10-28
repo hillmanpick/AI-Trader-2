@@ -414,6 +414,33 @@ def test_collector_snapshot_successor_does_not_emit_false_gap_or_request_reseed(
     asyncio.run(check())
 
 
+def test_candidate_rotation_rebases_feature_trade_cursor_without_calling_it_a_gap(tmp_path):
+    import asyncio
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path)))
+        collector.selected = ('BTCUSDT',)
+        collector.trade_checkpoints['ETHUSDT'] = 100
+        collector.builder.last_trade['ETHUSDT'] = 7
+        collector.builder.trade_gaps['ETHUSDT'] = 4
+        collector.builder.trades['ETHUSDT'].append((1,10.,1))
+        collector.builder.history['ETHUSDT'].append((1,100.))
+        collector.prepare_selected(('BTCUSDT','ETHUSDT'),2000)
+        collector.selected = ('BTCUSDT','ETHUSDT')
+        assert collector.builder.last_trade['ETHUSDT'] == 100
+        assert collector.builder.trade_gaps['ETHUSDT'] == 4
+        assert not collector.builder.trades['ETHUSDT']
+        assert not collector.builder.history['ETHUSDT']
+        assert collector.builder.bad_until['ETHUSDT'] == 62000
+        await collector.accept_trade({'e':'trade','s':'ETHUSDT','E':2001,
+                                      'T':2001,'t':101,'p':'100','q':'1','m':False},2001000000)
+        assert collector.builder.last_trade['ETHUSDT'] == 101
+        assert collector.builder.trade_gaps['ETHUSDT'] == 4
+        assert collector.event_queue.qsize() == 1
+    asyncio.run(check())
+
+
 def test_depth_gap_control_event_is_durable_catalog_evidence(tmp_path):
     import asyncio
     from quant.lab_config import LabConfig

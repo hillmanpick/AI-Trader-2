@@ -74,6 +74,26 @@ class Collector:
             self.raw_dropped += 1
         self.raw.append(data)
 
+    def prepare_selected(self, selected, now_ms):
+        """Rebase feature state when a symbol enters the rotating depth pool.
+
+        The all-market trade stream remains continuous while feature/depth
+        processing is intentionally limited to candidates. A symbol therefore
+        has an expected observation interval while it is out of the pool; that
+        interval must not be recorded as a feed sequence gap when it returns.
+        Start a fresh causal warmup instead of reusing stale feature history.
+        """
+        previous = set(self.selected)
+        for symbol in set(selected)-previous:
+            checkpoint = self.trade_checkpoints.get(symbol)
+            if checkpoint is None:
+                self.builder.last_trade.pop(symbol, None)
+            else:
+                self.builder.last_trade[symbol] = checkpoint
+            self.builder.trades[symbol].clear()
+            self.builder.history[symbol].clear()
+            self.builder.bad_until[symbol] = int(now_ms)+60000
+
     async def record_event(self,data,source='websocket',received_ns=None):
         # bookTicker is a redundant best-quote projection of the depth feed.
         # Depth snapshots/diffs remain the durable reconstruction source; do
@@ -512,6 +532,7 @@ class Collector:
                     for task in list(self.snapshot_tasks.values()):
                         task.cancel()
                     await asyncio.gather(*list(self.snapshot_tasks.values()),return_exceptions=True)
+                    self.prepare_selected(selected,int(time.time()*1000))
                     self.selected = selected
                     if selected:
                         self.micro_task = asyncio.create_task(self.micro(selected))
