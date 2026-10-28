@@ -52,6 +52,7 @@ class Settings:
     paper_dynamic_leverage: bool = False
     paper_min_leverage: int = 2
     paper_max_leverage: int = 20
+    paper_major_max_leverage: int = 100
     paper_risk_fraction: float = .10
     paper_risk_buffer: float = .001
     paper_depth_participation: float = .05
@@ -121,7 +122,9 @@ class Settings:
         if not math.isfinite(self.paper_maintenance_rate) or not 0 < self.paper_maintenance_rate < 1/self.leverage:
             raise ValueError('Invalid simulated maintenance margin')
         if (type(self.paper_min_leverage) is not int or type(self.paper_max_leverage) is not int
+                or type(self.paper_major_max_leverage) is not int
                 or not 1 <= self.paper_min_leverage <= self.paper_max_leverage <= 100
+                or not self.paper_min_leverage <= self.paper_major_max_leverage <= 100
                 or not math.isfinite(self.paper_risk_fraction)
                 or not 0 < self.paper_risk_fraction <= 1):
             raise ValueError('Invalid dynamic leverage limits')
@@ -169,6 +172,7 @@ class Settings:
             'paper_dynamic_leverage': self.paper_dynamic_leverage,
             'paper_min_leverage': self.paper_min_leverage,
             'paper_max_leverage': self.paper_max_leverage,
+            'paper_major_max_leverage': self.paper_major_max_leverage,
             'paper_risk_fraction': self.paper_risk_fraction,
             'paper_risk_buffer_bps': self.paper_risk_buffer * 10000,
             'paper_depth_participation': self.paper_depth_participation,

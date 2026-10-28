@@ -39,6 +39,7 @@ def paper_settings(base):
                   paper_dynamic_leverage=dynamic,
                   paper_min_leverage=int(os.getenv('QUANT_PAPER_MIN_LEVERAGE', str(min(2,max_leverage)))),
                   paper_max_leverage=max_leverage,
+                  paper_major_max_leverage=int(os.getenv('QUANT_PAPER_MAJOR_MAX_LEVERAGE', '100')),
                   paper_risk_fraction=float(os.getenv('QUANT_PAPER_RISK_FRACTION', '.10')),
                   paper_risk_buffer=float(os.getenv('QUANT_PAPER_RISK_BUFFER_BPS', '10'))/10000,
                   paper_depth_participation=float(os.getenv('QUANT_PAPER_DEPTH_PARTICIPATION', '.05')),

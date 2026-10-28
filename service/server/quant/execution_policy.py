@@ -7,9 +7,11 @@ def policy_for_settings(cfg, horizon_seconds=300):
     return {k:getattr(cfg,k) for k in (
         'fee_rate','paper_slippage','paper_margin','paper_max_margin','paper_min_leverage',
         'paper_max_leverage','paper_risk_fraction','paper_risk_buffer','paper_maintenance_rate',
+        'paper_major_max_leverage',
         'paper_depth_participation','paper_depth_range_bps','paper_max_spread_bps',
         'max_positions','max_notional')} | {'horizon_seconds':horizon_seconds,
-            'major_symbol_max_leverage':100,'major_symbols':['BTCUSDT','ETHUSDT']}
+            'major_symbol_max_leverage':cfg.paper_major_max_leverage,
+            'major_symbols':['BTCUSDT','ETHUSDT']}
 
 
 def leverage_bounds(policy,symbol):

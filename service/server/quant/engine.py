@@ -65,7 +65,8 @@ class Engine:
                             'take_pct':max(.0026,3*atr),'regime':'microstructure'}
                 cap,correlation = self.lab_risk_cap(symbol,1 if action=='long' else -1,cap)
             min_leverage = self.cfg.paper_min_leverage
-            max_leverage = 100 if symbol in {'BTCUSDT','ETHUSDT'} else self.cfg.paper_max_leverage
+            max_leverage = (self.cfg.paper_major_max_leverage
+                            if symbol in {'BTCUSDT','ETHUSDT'} else self.cfg.paper_max_leverage)
             return dynamic_leverage_plan(
                 bars, price, self.cfg.paper_margin, self.cfg.fee_rate,
                 self.cfg.paper_slippage+liquidity['spread_bps']/20000, min_leverage,
