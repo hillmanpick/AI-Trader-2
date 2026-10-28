@@ -26,6 +26,7 @@
 - 本轮手动训练检查已读取最新数据：60,413 原始样本、7,595 条干净样本、0.295 天干净覆盖，结果仍为 `insufficient_data`。
 - 服务器已部署只读运行验收命令 `python -m quant.runtime_acceptance`。最新执行中采集、全市场逐笔覆盖、候选盘口、Redis、Parquet 上限、动态杠杆、模拟安全状态和实盘只读检查均通过；命令返回 `1` 仅因为模型 OOS 门禁仍未通过。最新统计为 7,917 条干净样本、0.307 天覆盖，ClickHouse 生产目标仍未配置。
 - 随后手动训练检查读取到 62,462 条原始样本、7,987 条干净样本、0.310 天干净覆盖，结果仍为 `insufficient_data`；模型没有被启用。
+- 候选池轮换期间的 `Feature warmup` / `warming after reconnect` 已在验收脚本中分类为暂态；只有深度缺口、采集错误或未知阻断才使运行检查失败。修复已部署并验证当前 12/12 候选就绪、`depth_gaps=0`。最新验收统计为 8,169 条干净样本、0.316 天覆盖，模型 OOS 门禁仍未通过。
 - 事件库当前使用 Parquet/ZSTD；生产 ClickHouse 目标为空，不能把 exporter 适配器测试当成生产 ClickHouse 已上线。
 - 历史成交缺口中仍有 unresolved 区间。没有配置只读 `BINANCE_MARKET_DATA_KEY` 时，系统只尝试有限公共补采，无法声称旧历史完全连续。
 - 实盘账户 WebSocket 只读连接保持开启，`execution_enabled=false`；模拟账本独立、暂停、空仓。
