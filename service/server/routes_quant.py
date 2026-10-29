@@ -51,7 +51,7 @@ def register_quant_routes(app):
         now = int(datetime.now(timezone.utc).timestamp()*1000)
         try:
             from quant.event_lake import EventLake
-            lake = EventLake(lab.directory)
+            lake = EventLake(lab.directory, int(lab.event_max_gb * 1024**3), lab.retention_days * 24)
             event_history = lake.stats()
             event_history['clickhouse'] = lake.export_status(
                 os.getenv('QUANT_CLICKHOUSE_URL',''),

@@ -441,6 +441,89 @@ def test_candidate_rotation_rebases_feature_trade_cursor_without_calling_it_a_ga
     asyncio.run(check())
 
 
+def test_parquet_trade_archive_tracks_candidates_and_label_grace(tmp_path):
+    import asyncio
+    import time
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path), horizon_seconds=300))
+        collector.selected = ('BTCUSDT',)
+        now = int(time.time() * 1000)
+        trade = {'e':'trade','s':'BTCUSDT','E':now,'T':now,'t':1,'p':'100','q':'1','m':False}
+        await collector.record_event(trade | {'s':'ETHUSDT'})
+        assert collector.event_queue.empty()
+        await collector.record_event(trade,received_ns=now*1000000)
+        assert collector.event_queue.qsize() == 1
+
+        collector.prepare_selected(('ETHUSDT',), now + 1000)
+        collector.selected = ('ETHUSDT',)
+        await collector.record_event(trade | {'t':2},received_ns=(now+2000)*1000000)
+        assert collector.event_queue.qsize() == 2
+        after_grace = now + 1000 + 300000 + 45001
+        await collector.record_event(trade | {'t':3},received_ns=after_grace*1000000)
+        assert collector.event_queue.qsize() == 2
+        await collector.record_event({'e':'feedStatus','s':'','symbols':['BTCUSDT','ETHUSDT'],
+                                      'status':'disconnected'},received_ns=after_grace*1000000)
+        collector.event_queue.get_nowait()
+        collector.event_queue.get_nowait()
+        status = collector.event_queue.get_nowait()
+        assert status['kind'] == 'feedStatus'
+        assert status['payload']['symbols'] == ['ETHUSDT']
+    asyncio.run(check())
+
+
+def test_non_candidate_trades_still_rank_without_archiving_or_backfill(tmp_path):
+    import asyncio
+    from unittest.mock import patch
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector = Collector(LabConfig(directory=str(tmp_path)))
+        collector.selected = ('ETHUSDT',)
+        collector.trade_checkpoints['BTCUSDT'] = 100
+        trade = {'e':'trade','s':'BTCUSDT','E':2000,'T':2000,'t':10000,'p':'100','q':'1','m':False}
+        with patch.object(collector, 'repair_trade_gap') as repair:
+            await collector.accept_trade(trade, 2000000000)
+        assert collector.builder.trade_gaps['BTCUSDT'] == 0
+        assert collector.trade_checkpoints['BTCUSDT'] == 10000
+        assert 'BTCUSDT' in collector.trade_seen_this_process
+        assert collector.ranker.last_trade['BTCUSDT'] == 2000
+        assert collector.event_queue.empty()
+        repair.assert_not_called()
+    asyncio.run(check())
+
+
+def test_archiving_grace_recovers_pending_labels_after_collector_restart(tmp_path):
+    import time
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    from quant.lab_store import LabStore
+    now = int(time.time() * 1000)
+    LabStore(tmp_path).append([{'symbol':'ETHUSDT','ts':now-1000,'price':100.,
+                               'vector':[0.]*len(FEATURES),'meta':{'quality':True}}])
+    collector = Collector(LabConfig(directory=str(tmp_path),horizon_seconds=300))
+    assert collector.selected == ()
+    assert collector.archives_trade('ETHUSDT',now)
+    assert not collector.archives_trade('ETHUSDT',now+345000)
+
+
+def test_event_lake_pruning_leaves_headroom_and_records_eviction(tmp_path):
+    import time
+    lake = EventLake(tmp_path)
+    now = time.time_ns()
+    lake.append([event('trade',now,t=1,p='100',q='1',m=True,T=now//1000000)])
+    first_size = lake.stats()['bytes']
+    lake.append([event('trade',now+1000000,t=2,p='100',q='1',m=True,T=now//1000000+1)])
+    both = lake.stats()['bytes']
+    lake.max_bytes = both + 100
+    lake.prune(reserve_bytes=first_size+100)
+    assert lake.stats()['bytes'] <= lake.max_bytes-first_size-100
+    assert lake.stats()['rows'] == 1
+    assert lake.checkpoints()['BTCUSDT'] == 2
+    assert any(g['status']=='evicted' for g in lake.stats()['gaps'])
+
+
 def test_depth_gap_control_event_is_durable_catalog_evidence(tmp_path):
     import asyncio
     from quant.lab_config import LabConfig
@@ -593,6 +676,7 @@ def test_book_ticker_projection_is_not_written_to_durable_event_lake(tmp_path):
     from quant.lab_worker import Collector
     async def check():
         collector = Collector(LabConfig(directory=str(tmp_path)))
+        collector.selected = ('BTCUSDT',)
         await collector.record_event({'e':'bookTicker','s':'BTCUSDT','E':1,'u':2,
                                       'b':'100','B':'1','a':'101','A':'1'})
         assert collector.event_queue.empty()

@@ -83,7 +83,7 @@ def decode_row(row):
 
 
 class EventLake:
-    def __init__(self, directory, max_bytes=6*1024**3, retention_hours=336):
+    def __init__(self, directory, max_bytes=2*1024**3, retention_hours=336):
         self.directory = Path(directory)/'events'
         self.directory.mkdir(parents=True,exist_ok=True)
         self.path = self.directory/'catalog.db'
@@ -242,12 +242,13 @@ class EventLake:
         for group in groups:
             yield from heapq.merge(*(rows(s) for s in group),key=lambda r:r['received_ns'])
 
-    def prune(self):
+    def prune(self, reserve_bytes=0):
         cutoff = time.time_ns()-self.retention_hours*3600*10**9
         segments = self.segments()
         total = sum(s['bytes'] for s in segments)
+        target = max(0, self.max_bytes - max(0, reserve_bytes))
         for s in segments:
-            if s['last_ns'] >= cutoff and total <= self.max_bytes:
+            if s['last_ns'] >= cutoff and total <= target:
                 break
             path = self.directory/s['path']
             # Retention eviction is itself evidence, never silent truncation.

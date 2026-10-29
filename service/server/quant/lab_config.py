@@ -20,7 +20,7 @@ class LabConfig:
     min_days: int = field(default_factory=lambda: int(os.getenv('QUANT_LAB_MIN_DAYS', '7')))
     max_model_age_hours: int = field(default_factory=lambda: int(os.getenv('QUANT_LAB_MODEL_MAX_AGE_HOURS', '48')))
     auto_train: bool = field(default_factory=lambda: os.getenv('QUANT_LAB_AUTO_TRAIN', 'true').lower() == 'true')
-    event_max_gb: float = field(default_factory=lambda: float(os.getenv('QUANT_EVENT_MAX_GB','6')))
+    event_max_gb: float = field(default_factory=lambda: float(os.getenv('QUANT_EVENT_MAX_GB','2')))
     trade_shard_size: int = field(default_factory=lambda: int(os.getenv('QUANT_TRADE_SHARD_SIZE','128')))
     all_market_trades: bool = field(default_factory=lambda: os.getenv('QUANT_ALL_MARKET_TRADES','true').lower() == 'true')
     market_data_key: str = field(default_factory=lambda: os.getenv('BINANCE_MARKET_DATA_KEY',''))

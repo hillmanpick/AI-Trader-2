@@ -40,6 +40,16 @@ class Collector:
         self.rules, self.tickers, self.books, self.event_ms = {}, {}, {}, {}
         self.buffers, self.snapshot_tasks = {}, {}
         self.selected = ()
+        self.trade_archive_until = {}
+        # Resume pending label horizons after restart even if the new pool has
+        # not been selected yet. Features are durable; no extra raw pool is needed.
+        now_ms = int(time.time() * 1000)
+        grace_ms = self.cfg.horizon_seconds * 1000 + 45000
+        with self.store.connect() as c:
+            for symbol, stamp in c.execute(
+                    'SELECT symbol,MAX(ts) FROM samples WHERE ts>? GROUP BY symbol',
+                    (now_ms - grace_ms,)):
+                self.trade_archive_until[symbol] = stamp + grace_ms
         self.raw = deque(maxlen=30000)
         self.raw_dropped = 0
         self.errors = 0
@@ -51,6 +61,7 @@ class Collector:
         self.ranker = MarketRanker()
         self.event_queue = asyncio.Queue(maxsize=20000)
         self.trade_checkpoints = self.lake.checkpoints()
+        self.trade_seen_this_process = set()
         self.trade_shards = {}
         self.trade_tasks = []
         self.trade_symbols = ()
@@ -84,6 +95,13 @@ class Collector:
         Start a fresh causal warmup instead of reusing stale feature history.
         """
         previous = set(self.selected)
+        keep_until = int(now_ms) + self.cfg.horizon_seconds * 1000 + 45000
+        for symbol in previous - set(selected):
+            self.trade_archive_until[symbol] = max(
+                self.trade_archive_until.get(symbol, 0), keep_until)
+        for symbol, expiry in list(self.trade_archive_until.items()):
+            if expiry < now_ms:
+                self.trade_archive_until.pop(symbol, None)
         for symbol in set(selected)-previous:
             checkpoint = self.trade_checkpoints.get(symbol)
             if checkpoint is None:
@@ -94,16 +112,29 @@ class Collector:
             self.builder.history[symbol].clear()
             self.builder.bad_until[symbol] = int(now_ms)+60000
 
+    def archives_trade(self, symbol, now_ms=None):
+        now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
+        return symbol in self.selected or now_ms <= self.trade_archive_until.get(symbol, 0)
+
     async def record_event(self,data,source='websocket',received_ns=None):
         # bookTicker is a redundant best-quote projection of the depth feed.
         # Depth snapshots/diffs remain the durable reconstruction source; do
         # not spend event-lake capacity storing an otherwise unused duplicate.
         if data.get('e') == 'bookTicker':
             return
+        now_ms = (received_ns or time.time_ns()) // 1000000
+        if data.get('e') in {'trade', 'aggTrade'} and not self.archives_trade(data.get('s', ''), now_ms):
+            return
+        if data.get('e') == 'feedStatus':
+            symbols = [s for s in data.get('symbols', ()) if self.archives_trade(s, now_ms)]
+            if not symbols:
+                return
+            data = data | {'symbols': symbols}
         await self.event_queue.put(envelope(data,source,received_ns))
 
     async def event_writer(self):
         await asyncio.to_thread(self.lake.recover)
+        last_prune = 0.
         labeler = EventLabeler(self.cfg.horizon_seconds*1000)
         # Recover the tail that may have been archived before a crash but whose
         # in-memory labeler had not yet reached expiry. This runs beside live
@@ -138,6 +169,12 @@ class Collector:
             labels = labeler.drain()
             if labels:
                 await asyncio.to_thread(self.store.append_labels,labels)
+            if time.monotonic() - last_prune >= 60:
+                # Prune in the writer, not concurrently from maintenance. Leave
+                # bounded headroom for the next minute of candidate events.
+                reserve = min(64 * 1024**2, int(self.lake.max_bytes * .05))
+                await asyncio.to_thread(self.lake.prune, reserve_bytes=reserve)
+                last_prune = time.monotonic()
             self.event_written += len(batch)
             for _ in batch:
                 self.event_queue.task_done()
@@ -293,12 +330,14 @@ class Collector:
             self.ranker.invalidate(symbol,received_ns//1000000)
             self.builder.bad_until[symbol] = int(time.time()*1000)+60000
             # Backfill must not block ingestion for every other symbol in the
-            # shard. The exact range remains recorded even if recovery fails.
-            task = asyncio.create_task(self.repair_trade_gap(symbol,previous+1,identity-1))
-            self.repairs.add(task)
-            task.add_done_callback(self.repairs.discard)
+            # shard. Only archived candidate history needs durable repair.
+            if self.archives_trade(symbol, received_ns // 1000000):
+                task = asyncio.create_task(self.repair_trade_gap(symbol,previous+1,identity-1))
+                self.repairs.add(task)
+                task.add_done_callback(self.repairs.discard)
         await self.record_event(event,'websocket',received_ns)
         self.trade_checkpoints[symbol] = identity
+        self.trade_seen_this_process.add(symbol)
         price,quantity = float(event['p']),float(event['q'])
         if not math.isfinite(price) or not math.isfinite(quantity) or price<=0 or quantity<=0:
             # Binance emits ID-bearing X=NA frames with p=q=0. Preserve these
@@ -486,7 +525,11 @@ class Collector:
                      'raw_dropped':self.raw_dropped+self.archive.dropped,
                      'raw_archive_complete':not (self.raw_dropped or self.archive.dropped),'errors':self.errors,
                      'all_market_trades':self.cfg.all_market_trades,'trade_shards':self.trade_shards,
-                     'trade_symbols_seen':len(self.trade_checkpoints),'event_queue':self.event_queue.qsize(),
+                     'trade_symbols_seen':len(self.trade_seen_this_process),'event_queue':self.event_queue.qsize(),
+                     'archive_scope':'candidate_trades_and_depth',
+                     'archive_grace_seconds':self.cfg.horizon_seconds+45,
+                     'archived_trade_symbols':[s for s in set(self.selected)|set(self.trade_archive_until)
+                                               if self.archives_trade(s)],
                      'events_written':self.event_written,'ranked_ready':sum(r['ready'] for r in ranking),
                      'non_execution_trade_frames':self.trade_notices,
                      'schema':SCHEMA,'features':list(FEATURES),'uptime_seconds':int(time.time()-self.started)}
@@ -548,7 +591,6 @@ class Collector:
                 await self.record_event({'e':'candidates','s':'','symbols':list(selected)},'derived')
                 await asyncio.to_thread(self.store.prune,self.cfg.retention_days)
                 self.archive.prune(self.cfg.retention_days)
-                await asyncio.to_thread(self.lake.prune)
                 if self.cfg.auto_train and time.time()-self.last_train > 21600:
                     self.last_train = time.time()
                     # Training is a separate process/container to bound memory and CPU.
