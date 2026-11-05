@@ -27,7 +27,11 @@ class Notifier:
             slot = slot_namespace + ':' + slot
         if self.store.get('report_slot') != slot:
             account = self.store.get('account',{}) if account_snapshot is None else account_snapshot
-            self.store.event('持仓报告',report_body(self.cfg,positions,status,account,now))
+            performance = None
+            if self.cfg.mode == 'paper':
+                from .paper_performance import paper_performance
+                performance = paper_performance(self.store,now)
+            self.store.event('持仓报告',report_body(self.cfg,positions,status,account,now,performance))
             self.store.set('report_slot',slot)
         if not self.cfg.mail_ready or time.monotonic() < self.next_attempt:
             return

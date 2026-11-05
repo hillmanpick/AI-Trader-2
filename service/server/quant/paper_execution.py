@@ -6,6 +6,7 @@ from datetime import datetime,timezone
 
 from .execution_state import OrderJournal,SimulatedBroker,number,TERMINAL
 from .order_book import DepthBook
+from .mail_format import trade_notice_body
 
 
 def utc(stamp):
@@ -16,6 +17,9 @@ class PaperExecution:
     def __init__(self,engine,bus):
         self.engine,self.bus = engine,bus
         self.journal = OrderJournal(engine.store.path)
+        with engine.store.connect() as c:
+            c.execute('CREATE TABLE IF NOT EXISTS paper_notifications '
+                      '(order_id TEXT PRIMARY KEY, event_id INTEGER NOT NULL, payload TEXT NOT NULL)')
         self.broker = SimulatedBroker(self.journal,ack_ms=20,cancel_ms=20,
                                      fee_rate=engine.cfg.fee_rate,
                                      participation=engine.cfg.paper_depth_participation,on_fill=self.apply_fill,
@@ -102,9 +106,42 @@ class PaperExecution:
         put('positions',positions)
         put('paper_balance',wallet)
         put('account',{'wallet':wallet,'equity':equity,'available':equity-margin,'updated_at':utc(time.time_ns())})
-        c.execute('INSERT INTO events(kind,body,created_at) VALUES (?,?,?)',
-                  ('清仓成交' if order['closing'] else '开仓成交',
-                   f"{order['symbol']} {'探索模拟（未通过样本外验证）' if (old or positions.get(order['symbol'],{})).get('exploration') else '模拟'}部分/全部成交 数量={qty} 价格={price} 手续费={fee} USDT",utc(fill['at_ns'])))
+        # All depth levels for an IOC order update one transactional notice.
+        # The same idempotent fill transaction commits the ledger and this body.
+        position = old if order['closing'] else positions[order['symbol']]
+        saved = c.execute('SELECT event_id,payload FROM paper_notifications WHERE order_id=?',(order['id'],)).fetchone()
+        notice = json.loads(saved[1]) if saved else {
+            'schema':'paper_order_notice_v1','symbol':order['symbol'],'order_id':order['id'],
+            'closing':order['closing'],'direction':'long' if position['amount']>0 else 'short',
+            'exploration':bool(position.get('exploration')),'leverage':position['leverage'],
+            'reason':order.get('reason'),'opened_at':position['opened_at'],
+            'requested_quantity':float(order['quantity']),
+            'quantity':0.,'quote':0.,'fee':0.,'entry_fee':0.,'gross_pnl':0.,'margin':0.,'fills':0}
+        notice['quantity'] += qty
+        notice['quote'] += qty*price
+        notice['fee'] += fee
+        notice['fills'] += 1
+        notice['filled_at'] = utc(fill['at_ns'])
+        notice['entry_price'] = position['entry']
+        notice['stop_price'] = position.get('stop_price')
+        notice['take_price'] = position.get('take_price')
+        if order['closing']:
+            notice['entry_fee'] += old.get('entry_fee',0)*qty/abs(old['amount'])
+            notice['gross_pnl'] += pnl
+            notice['margin'] += old['initial_margin']*qty/abs(old['amount'])
+        else:
+            notice['margin'] += qty*price/position['leverage']
+        notice['remaining_position'] = abs(positions.get(order['symbol'],{}).get('amount',0))
+        notice['wallet'] = wallet
+        payload = json.dumps(notice,ensure_ascii=False,allow_nan=False)
+        body = trade_notice_body(notice)
+        if saved:
+            c.execute('UPDATE events SET body=?,mailed_at=NULL WHERE id=?',(body,saved[0]))
+            c.execute('UPDATE paper_notifications SET payload=? WHERE order_id=?',(payload,order['id']))
+        else:
+            event_id = c.execute('INSERT INTO events(kind,body,created_at) VALUES (?,?,?)',
+                                ('清仓成交' if order['closing'] else '开仓成交',body,utc(fill['at_ns']))).lastrowid
+            c.execute('INSERT INTO paper_notifications VALUES (?,?,?)',(order['id'],event_id,payload))
 
     def tick(self):
         orders = self.journal.orders(active=True)

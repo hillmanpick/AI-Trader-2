@@ -715,6 +715,10 @@ def test_paper_partial_fills_update_wallet_margin_and_reduce_only_atomically(tmp
     assert p['initial_margin']==pytest.approx(50.8)
     assert db.get('paper_balance')==pytest.approx(10000-508*.0005)
     assert execution.journal.orders()[0]['state']=='EXPIRED'
+    notices = [e for e in db.events() if e['kind']=='开仓成交']
+    assert len(notices)==1  # two depth fills become one order notice
+    assert '做多' in notices[0]['body'] and '10 倍' in notices[0]['body']
+    assert '本次投入保证金：50.8 USDT' in notices[0]['body']
     raw['lastUpdateId']=101
     raw['updated_ms']=(start+40000000)//1000000
     with patch('quant.paper_execution.time.time_ns',return_value=start+40000000):
@@ -726,6 +730,22 @@ def test_paper_partial_fills_update_wallet_margin_and_reduce_only_atomically(tmp
     assert len(execution.journal.fills())==3
     assert len(db.get('execution_closed_fills'))==1
     assert db.get('execution_statistics')['states']=={'EXPIRED':1,'FILLED':1}
+    notice = next(e for e in db.events() if e['kind']=='清仓成交')
+    assert '平多' in notice['body'] and '已实现毛盈亏：-13 USDT' in notice['body']
+    assert '双边手续费合计：0.5015 USDT' in notice['body']
+    assert '已实现净盈亏：-13.5015 USDT' in notice['body']
+    from quant.paper_performance import paper_performance
+    from datetime import datetime,timezone
+    performance = paper_performance(db,datetime.fromtimestamp(start/1e9+1,timezone.utc))
+    assert performance['net']==pytest.approx(-13.5015)
+    assert performance['recent_net']==pytest.approx(-13.5015)
+    assert performance['fees']==pytest.approx(.5015)
+    db.set('paper_balance',1000000)  # cash additions never change trading PnL
+    assert paper_performance(db,datetime.fromtimestamp(start/1e9+1,timezone.utc))['net']==pytest.approx(-13.5015)
+    assert paper_performance(db,datetime.fromtimestamp(start/1e9+86401,timezone.utc))['recent_net']==0
+    before = len(db.events())
+    execution.tick()
+    assert len(db.events())==before
 
 
 def test_sampled_model_approval_cannot_skip_event_execution_validation(tmp_path):

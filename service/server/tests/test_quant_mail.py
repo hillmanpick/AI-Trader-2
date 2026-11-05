@@ -42,3 +42,25 @@ def test_report_formats_short_position_without_losing_small_quantity():
     assert '报告时间：2026-10-14 08:00:00' in body
     assert '持仓数量：0.00001' in body and '方向：做空' in body
     assert '账户权益：10,000 USDT' in body and '浮动盈亏：-0.0001 USDT' in body
+
+
+def test_report_includes_net_returns_and_margin():
+    body = report_body(Settings(),{'BTCUSDT':{'amount':1,'entry':100,'mark':102,'pnl':2,
+                        'leverage':5,'initial_margin':20}},'running',{'equity':1000},
+                       performance={'scope':'盘口模拟','net':-1.234567,'today_net':2,'recent_net':.000123,'fees':.5})
+    assert '累计已实现净盈亏：-1.234567 USDT' in body
+    assert '近两小时已实现净盈亏：+0.000123 USDT' in body
+    assert '杠杆：5 倍' in body and '占用保证金：20 USDT' in body
+
+
+def test_short_close_notice_profits_after_both_fees():
+    from quant.mail_format import trade_notice_body
+    n = {'symbol':'ETHUSDT','closing':True,'direction':'short','exploration':True,
+         'quantity':2,'quote':180,'requested_quantity':2,'fills':3,'leverage':10,'margin':20,
+         'entry_price':100,'entry_fee':.1,'fee':.09,'gross_pnl':20,'remaining_position':0,
+         'opened_at':'2026-11-05T04:00:00+00:00','filled_at':'2026-11-05T04:01:00+00:00',
+         'reason':'dynamic_take_profit','wallet':1019.81}
+    body = trade_notice_body(n)
+    assert '平空' in body and '已实现净盈亏：+19.81 USDT' in body
+    assert '保证金净收益率：+99.05%' in body and '持仓时长：60 秒' in body
+    assert '动态止盈' in body
