@@ -47,6 +47,7 @@ def paper_settings(base):
                   paper_depth_range_bps=float(os.getenv('QUANT_PAPER_DEPTH_RANGE_BPS', '10')),
                   paper_entry_filter=os.getenv('QUANT_PAPER_ENTRY_FILTER','shadow'),
                   paper_lab_required=os.getenv('QUANT_PAPER_LAB_REQUIRED','false').lower() == 'true',
+                  paper_exploration_mode=os.getenv('QUANT_PAPER_EXPLORATION_MODE','false').lower() == 'true',
                   reflection_enabled=os.getenv('QUANT_PAPER_REFLECTION_ENABLED','true').lower() == 'true',
                   reflection_min_trades=int(os.getenv('QUANT_PAPER_REFLECTION_MIN_TRADES', str(base.reflection_min_trades))),
                   reflection_window=int(os.getenv('QUANT_PAPER_REFLECTION_WINDOW', str(base.reflection_window))),

@@ -169,7 +169,9 @@ def train(cfg, gradient=False):
     research_passed = all(passes(f['test']) and f['stress']['net_pnl'] > 0 and f['validation']['net_pnl'] > 0 for f in folds)
     # Fit a single final model before both event holdouts, with its own exact
     # version. A fold model's result can never approve newly refitted weights.
-    final_model = fit(research) | {'threshold':.6,'label_schema':LABEL_SCHEMA,
+    # Carry the last chronological validation selection into the final refit.
+    # Separate event holdouts still decide whether this exact refit is approved.
+    final_model = fit(research) | {'threshold':folds[-1]['threshold'],'label_schema':LABEL_SCHEMA,
         'training_end_ms':max(r['label_end'] for r in research)}
     final_model['version'] = model_version(final_model)
     proof = {'passed':False,'model_version':final_model['version'],

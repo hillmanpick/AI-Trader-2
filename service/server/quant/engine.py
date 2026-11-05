@@ -67,8 +67,13 @@ class Engine:
             min_leverage = self.cfg.paper_min_leverage
             max_leverage = (self.cfg.paper_major_max_leverage
                             if symbol in {'BTCUSDT','ETHUSDT'} else self.cfg.paper_max_leverage)
+            margin = self.cfg.paper_margin
+            if self.cfg.paper_exploration_mode:
+                # 2,000 USDT is a budget ceiling for exploration. Shallow books
+                # must reduce the virtual order instead of inventing liquidity.
+                margin = min(margin, cap/min_leverage)
             return dynamic_leverage_plan(
-                bars, price, self.cfg.paper_margin, self.cfg.fee_rate,
+                bars, price, margin, self.cfg.fee_rate,
                 self.cfg.paper_slippage+liquidity['spread_bps']/20000, min_leverage,
                 max_leverage, self.cfg.paper_risk_fraction,
                 self.cfg.paper_maintenance_rate, self.cfg.paper_risk_buffer,
@@ -418,10 +423,10 @@ class Engine:
             context = self.store.get(f'entry_context:{symbol}', {})
             if self.cfg.mode == 'paper' and self.cfg.paper_dynamic_leverage:
                 cached = self.candle_cache.get(symbol)
-                if not cached:
+                if not cached and self.cfg.strategy != 'lab_model':
                     return
                 try:
-                    plan = self.entry_profile(price,cached[1],symbol,action)
+                    plan = self.entry_profile(price,cached[1] if cached else [],symbol,action)
                 except ValueError as exc:
                     self.store.set(f'sizing:{symbol}',{'status':'blocked','reason':str(exc),'at':utcnow()})
                     return
@@ -440,7 +445,13 @@ class Engine:
             required = order_notional/position_leverage + order_notional*0.002
             if float(account.get('available',0)) < required:
                 return
-            amount = float(self.exchange.quantity(symbol,order_notional,price)) * (1 if action=='long' else -1)
+            try:
+                amount = float(self.exchange.quantity(symbol,order_notional,price)) * (1 if action=='long' else -1)
+            except ValueError as exc:
+                # A single thin candidate below exchange quantity/notional
+                # filters must not stall the whole market loop for 30 seconds.
+                self.store.set(f'sizing:{symbol}',{'status':'blocked','reason':str(exc),'at':utcnow()})
+                return
             if (self.cfg.mode == 'paper' and self.cfg.strategy == 'adaptive'
                     and self.cfg.paper_dynamic_exits and self.cfg.paper_entry_filter == 'enforce'):
                 cached = self.candle_cache.get(symbol)
@@ -551,6 +562,13 @@ class Engine:
                     self.ensure_protection(symbol,p)
             self.finish_review(symbol,price)
             p = self.store.get('positions',{}).get(symbol)
+            if self.cfg.strategy == 'lab_model':
+                # This strategy's direction and volatility come from fresh
+                # Redis features; candle readiness belongs to candle strategies.
+                model_action = getattr(self,'lab_signal',lambda s:'hold')(symbol)
+                if model_action in ('long','short') and not p and self.cfg.enabled and not self.store.get('paused',False):
+                    self.execute(symbol,model_action,price,'lab_model',str(int(time.time()*1000)))
+                continue
             # Cache closed candles until next expected close; poll mark prices separately.
             now = int(datetime.now(timezone.utc).timestamp()*1000)+self.exchange.offset
             cached = self.candle_cache.get(symbol)
@@ -572,11 +590,6 @@ class Engine:
             bar_id = int(bars[-1][0])
             if self.cfg.mode == 'paper' and self.cfg.paper_dynamic_exits:
                 self.store.set(f'volatility:{symbol}',volatility_plan(bars,price,p.get('leverage',self.cfg.leverage) if p else 1,self.cfg.paper_maintenance_rate))
-            if self.cfg.strategy == 'lab_model':
-                model_action = getattr(self,'lab_signal',lambda s:'hold')(symbol)
-                if model_action in ('long','short') and not p and self.cfg.enabled and not self.store.get('paused',False):
-                    self.execute(symbol,model_action,price,'lab_model',str(int(time.time()*1000)))
-                continue
             last = self.store.get(f'bar:{symbol}')
             if last is None:
                 # Startup observes current candle, never replays historical entries.

@@ -7,6 +7,8 @@ from .lab_config import LabConfig
 from .lab_model import model_status, decide
 from .lab_store import RealtimeBus
 from .store import utcnow
+from .lab_features import SCHEMA, FEATURES
+import math
 
 
 class LabExecution:
@@ -37,11 +39,11 @@ class LabExecution:
         self.last_refresh = time.time()
         self.status,self.model = model_status(self.cfg)
         e = self.engine
-        if e.cfg.mode != 'paper' or e.cfg.api_key or e.cfg.api_secret:
+        if e.cfg.mode != 'paper' or e.cfg.api_key or e.cfg.api_secret or e.cfg.live_enabled:
             raise RuntimeError('Model execution cannot access a real account')
         try:
             candidate = self.bus.get('candidates') or {}
-            if time.time()*1000-candidate.get('ts',0) > 650000:
+            if not 0 <= time.time()*1000-candidate.get('ts',0) <= 650000:
                 raise ValueError('Candidate pool stale')
             symbols = tuple(candidate.get('symbols',[]))
             # Preserve open-position exits and in-flight reviews on pool rotation.
@@ -63,7 +65,10 @@ class LabExecution:
     def row(self,symbol):
         row = self.bus.get('feature:'+symbol)
         if (not row or not 0 <= time.time()*1000-row['ts'] <= 10000
-                or not row['meta'].get('quality')):
+                or not row['meta'].get('quality') or row['meta'].get('schema') != SCHEMA
+                or row.get('symbol') != symbol or len(row.get('vector',[])) != len(FEATURES)
+                or not all(math.isfinite(v) for v in row['vector'])
+                or not math.isfinite(row['price']) or row['price'] <= 0):
             raise ValueError('Features stale or invalid')
         return row
 
@@ -79,9 +84,11 @@ class LabExecution:
         self.refresh()
         if not self.cfg.enabled or not self.status.get('ready') or not self.model:
             return False
+        if self.status.get('exploration') and not self.engine.cfg.paper_exploration_mode:
+            return False
         try:
             state = self.bus.get('state') or {}
-            if time.time()*1000-state.get('ts',0) > 15000 or symbol not in state.get('ready_symbols',[]):
+            if not 0 <= time.time()*1000-state.get('ts',0) <= 15000 or symbol not in state.get('ready_symbols',[]):
                 return False
             self.row(symbol)
             return True
@@ -91,6 +98,8 @@ class LabExecution:
     def signal(self,symbol):
         e = self.engine
         if not self.gate(symbol):
+            e.store.set(f'signal:{symbol}',{'action':'hold','reason':self.status.get('reason') if not self.status.get('ready') else '实时特征或盘口尚未就绪',
+                                          'at':utcnow(),'source':'numeric_model'})
             return 'hold'
         try:
             row = self.row(symbol)
@@ -99,9 +108,9 @@ class LabExecution:
             self.last_decision[symbol] = row['ts']
             decision = decide(self.model,row)
             # Expected target must cover both fees, spread and adverse slippage.
-            distance = max(.0008,row['meta']['atr_proxy']*1.5)
+            target = max(.0026,row['meta']['atr_proxy']*3)
             cost = 2*(e.cfg.fee_rate+e.cfg.paper_slippage)+row['meta']['spread_bps']/10000
-            if distance*2 <= cost*1.5:
+            if decision['action'] in ('long','short') and target <= cost*1.5:
                 decision['action'] = 'hold'
                 decision['reason'] = 'Cost exceeds expected target space'
             action = decision['action']
@@ -113,8 +122,11 @@ class LabExecution:
                 decision['reason'] = 'Directional concentration limit'
             e.store.set(f'signal:{symbol}',decision | {'price':row['price'],'at':utcnow(),'source':'numeric_model'})
             e.store.set(f'entry_context:{symbol}',{'model_version':self.model['version'],
+                        'exploration':bool(self.status.get('exploration')),'model_approved':bool(self.model.get('approved')),
                         'confidence':decision['confidence'],'feature_ts':row['ts'],
                         'regime':'microstructure','strategy':'lab_model'})
             return action
-        except Exception:
+        except Exception as exc:
+            e.store.set(f'signal:{symbol}',{'action':'hold','reason':'Model signal unavailable: '+type(exc).__name__,
+                                          'at':utcnow(),'source':'numeric_model'})
             return 'hold'

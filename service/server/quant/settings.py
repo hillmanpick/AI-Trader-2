@@ -60,6 +60,7 @@ class Settings:
     paper_depth_range_bps: float = 10
     paper_entry_filter: str = 'shadow'
     paper_lab_required: bool = False
+    paper_exploration_mode: bool = False
     reflection_enabled: bool = field(default_factory=lambda: os.getenv('QUANT_REFLECTION_ENABLED', 'false').lower() == 'true')
     reflection_min_trades: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_MIN_TRADES', '12')))
     reflection_window: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_WINDOW', '50')))
@@ -93,6 +94,8 @@ class Settings:
             raise ValueError('Lab model requires isolated paper mode, readiness gate and dynamic leverage')
         if self.paper_lab_required and self.mode != 'paper':
             raise ValueError('Lab execution is paper-only')
+        if self.paper_exploration_mode and (self.mode != 'paper' or self.strategy != 'lab_model' or self.api_key or self.api_secret):
+            raise ValueError('Exploration requires credential-free paper lab mode')
         if self.paper_entry_filter not in {'shadow','enforce'}:
             raise ValueError('Paper entry filter must be shadow/enforce')
         if self.reflection_min_trades < 5 or self.reflection_window < self.reflection_min_trades or self.reflection_interval_trades < 1:
@@ -180,6 +183,7 @@ class Settings:
             'paper_depth_range_bps': self.paper_depth_range_bps,
             'paper_entry_filter': self.paper_entry_filter,
             'paper_lab_required': self.paper_lab_required,
+            'paper_exploration_mode': self.paper_exploration_mode,
             'reflection_enabled': self.reflection_enabled and self.mode == 'paper',
             'reflection_min_trades': self.reflection_min_trades,
             'reflection_window': self.reflection_window,

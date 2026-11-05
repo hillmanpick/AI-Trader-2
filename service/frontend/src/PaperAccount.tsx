@@ -27,7 +27,7 @@ export function PaperAccount() {
     ? positions.reduce((sum, p) => sum + p.initial_margin!, 0) : null
   return <section className="card" style={{ padding: 22, marginBottom: 22, lineHeight: 1.8 }}>
     <h2>独立模拟交易 <span className="tag">虚拟成交 · 实盘只读</span></h2>
-    <p>使用币安公开行情与经过验证的规则或数值模型。模拟进程没有币安密钥，不能向交易所提交订单。</p>
+    <p>使用币安公开行情与规则或数值模型。模拟进程没有币安密钥，不能向交易所提交订单。</p>
     {error && <p role="alert">{error}</p>}
     {!data ? <p>正在读取模拟账户…</p> : <>
       <p>状态：{data.stale ? '进程心跳过期' : names[data.worker.status] || data.worker.status} · 最后心跳 {beijingTime(data.worker.heartbeat)}（UTC+8）</p>
@@ -35,7 +35,8 @@ export function PaperAccount() {
       {data.worker.error && <p role="alert" style={{ color: '#edac65' }}>{data.worker.error}</p>}
       <p><strong>新仓模拟杠杆：{data.config.paper_dynamic_leverage ? `${data.config.paper_min_leverage}–${data.config.paper_max_leverage} 倍动态计算（BTC/ETH 上限 ${data.config.paper_major_max_leverage} 倍）` : formatLeverage(data.config.leverage)}</strong> · 当前虚拟钱包 {fmt(data.account.wallet)} USDT · 新仓每仓保证金 {fmt(data.config.paper_margin || data.config.order_notional / data.config.leverage)} USDT · 总保证金上限 {fmt(data.config.paper_max_margin || data.config.max_notional / data.config.leverage)} USDT · 最多 {data.config.max_positions} 个仓位</p>
       {data.config.paper_dynamic_leverage && <p>杠杆由波动止损距离、往返成本、盘口容量和剩余组合风险计算；单仓风险预算为保证金的 {fmt(data.config.paper_risk_fraction * 100)}%，无法支持最低杠杆时跳过。达到最高倍数不是目标。</p>}
-      {data.config.paper_lab_required && <p><strong>模型开仓门槛：{data.lab_gate?.ready ? '验证通过' : '未就绪'}</strong> · {data.lab_gate?.reason || '等待采集与模型验证'}；已有仓位退出始终独立执行。</p>}
+      {data.config.paper_lab_required && <p><strong>模型开仓门槛：{data.lab_gate?.exploration ? '探索模拟 · 尚未通过验证' : data.lab_gate?.ready ? '验证通过' : '未就绪'}</strong> · {data.lab_gate?.reason || '等待采集与模型验证'}；已有仓位退出始终独立执行。</p>}
+      {data.config.paper_exploration_mode && <p>探索模拟按实际盘口容量缩小订单，每仓保证金以配置金额为上限；虚拟成交用于收集前向测试结果，不表示模型已通过盈利验证。</p>}
       {data.config.paper_lab_required && <p>模拟订单采用盘口分档 IOC 成交，未成交余额过期，剩余持仓继续管理。累计订单 {fmt(data.execution_statistics?.orders, 0)} · 首次成交 P50 {fmt(data.execution_statistics?.first_fill?.p50_ms)} / P95 {fmt(data.execution_statistics?.first_fill?.p95_ms)} 毫秒。这里测量模拟处理链路，不代表币安真实下单延迟。</p>}
       <p>{data.config.symbols.join('、')} · {data.config.interval} K 线 · 均线 {data.config.fast}/{data.config.slow} · {data.config.paper_dynamic_exits ? '新仓使用 ATR14 动态目标与移动止损，止损只收紧，不放宽' : `模拟止损 ${data.config.stop_pct * 100}% / 止盈 ${data.config.take_pct * 100}%`} · 模拟盘不设每日亏损上限</p>
       <p>{data.config.strategy === 'lab_model' ? '数值模型判断方向 · 行情事件唤醒退出检查' : data.config.strategy === 'adaptive' ? '趋势：均线交叉跟随 · 震荡：布林带区间回归' : data.config.strategy} · {data.config.paper_dynamic_leverage ? '新仓动态杠杆' : `新仓 ${data.config.leverage} 倍杠杆`}。旧仓保留开仓时的保证金与风控参数。</p>

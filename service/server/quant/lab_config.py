@@ -20,6 +20,10 @@ class LabConfig:
     min_days: int = field(default_factory=lambda: int(os.getenv('QUANT_LAB_MIN_DAYS', '7')))
     max_model_age_hours: int = field(default_factory=lambda: int(os.getenv('QUANT_LAB_MODEL_MAX_AGE_HOURS', '48')))
     auto_train: bool = field(default_factory=lambda: os.getenv('QUANT_LAB_AUTO_TRAIN', 'true').lower() == 'true')
+    # Paper-only research switch. It may inspect a rejected model, but it never
+    # makes that model eligible for live/testnet execution.
+    exploration_mode: bool = field(default_factory=lambda: os.getenv('QUANT_PAPER_EXPLORATION_MODE', 'false').lower() == 'true')
+    exploration_threshold: float = field(default_factory=lambda: float(os.getenv('QUANT_PAPER_EXPLORATION_THRESHOLD', '.45')))
     event_max_gb: float = field(default_factory=lambda: float(os.getenv('QUANT_EVENT_MAX_GB','2')))
     trade_shard_size: int = field(default_factory=lambda: int(os.getenv('QUANT_TRADE_SHARD_SIZE','128')))
     all_market_trades: bool = field(default_factory=lambda: os.getenv('QUANT_ALL_MARKET_TRADES','true').lower() == 'true')
@@ -38,6 +42,8 @@ class LabConfig:
             raise ValueError('Invalid universe/liquidity limits')
         if not math.isfinite(self.event_max_gb) or not .1 <= self.event_max_gb <= 1024 or not 1 <= self.trade_shard_size <= 200:
             raise ValueError('Invalid event lake/shard limits')
+        if not math.isfinite(self.exploration_threshold) or not .4 <= self.exploration_threshold <= .9:
+            raise ValueError('Invalid paper exploration threshold')
         if not 1800 <= self.event_validation_seconds <= 86400:
             raise ValueError('Invalid event validation window')
         return self

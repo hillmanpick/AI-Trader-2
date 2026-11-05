@@ -52,7 +52,25 @@ def model_status(cfg, now=None):
         if model.get('schema') != SCHEMA or model.get('features') != list(FEATURES):
             return {'ready':False,'reason':'模型特征版本不匹配'}, None
         if not model.get('approved'):
-            return {'ready':False,'reason':'样本外检验未通过','version':model.get('version')},None
+            if not getattr(cfg, 'exploration_mode', False):
+                return {'ready':False,'reason':'样本外检验未通过','version':model.get('version')},None
+            # Exploration is deliberately paper-only and visibly unapproved.
+            # Do not bypass the schema, coefficient, or model-age checks.
+            probabilities(model,[0.]*len(FEATURES))
+            if not 0 <= now-model['trained_ms'] <= cfg.max_model_age_hours*3600000:
+                return {'ready':False,'reason':'模型过期，需要重新验证','version':model.get('version')},None
+            exploratory = dict(model)
+            exploratory['threshold'] = cfg.exploration_threshold
+            from .execution_policy import model_version
+            if model['version'] != model_version(model):
+                return {'ready':False,'reason':'模型版本与参数不匹配'},None
+            exploratory['artifact_version'] = model['version']
+            exploratory['version'] = model_version(exploratory)
+            exploratory['exploration'] = True
+            return {'ready':True,'approved':False,'exploration':True,
+                    'reason':'探索模拟：模型尚未通过样本外验证，仅允许虚拟订单',
+                    'version':exploratory['version'],'artifact_version':model['version'],'trained_ms':model['trained_ms'],
+                    'threshold':exploratory['threshold'],'test':model.get('test',{})}, exploratory
         execution_validation = model.get('execution_validation',{})
         if not execution_validation.get('passed') or execution_validation.get('model_version') != model.get('version'):
             return {'ready':False,'reason':'等待此模型版本通过逐事件盘口样本外回放',
@@ -84,4 +102,7 @@ def decide(model, row):
     action = 'long' if side == 1 else 'short' if side == -1 else 'hold'
     if confidence < model['threshold']:
         action = 'hold'
-    return {'action':action,'confidence':confidence,'probabilities':p,'model_version':model['version']}
+    return {'action':action,'confidence':confidence,'probabilities':p,'model_version':model['version'],
+            'threshold':model['threshold'],'exploration':bool(model.get('exploration')),
+            'approved':bool(model.get('approved')),
+            'reason':'Below confidence threshold' if confidence < model['threshold'] else 'Neutral class' if side == 0 else 'Directional model signal'}

@@ -87,6 +87,7 @@ class PaperExecution:
             p = old or {'leverage':leverage,'stop_pct':plan['stop_pct'],'take_pct':plan['take_pct'],
                         'opened_at':utc(order['submitted_ns']),'maintenance_rate':e.cfg.paper_maintenance_rate,
                         'dynamic_exits':True,'exit_plan':plan,'model_version':context.get('model_version'),
+                        'exploration':bool(context.get('exploration')),'model_approved':bool(context.get('model_approved')),
                         'feature_ts':context.get('feature_ts'),'strategy_version':e.reflection.active().get('version',1),
                         'entry_regime':context.get('regime','microstructure'),'mae_pct':0,'mfe_pct':0}
             p = p | {'amount':side*total,'entry':entry,'mark':price,'pnl':0,
@@ -103,7 +104,7 @@ class PaperExecution:
         put('account',{'wallet':wallet,'equity':equity,'available':equity-margin,'updated_at':utc(time.time_ns())})
         c.execute('INSERT INTO events(kind,body,created_at) VALUES (?,?,?)',
                   ('清仓成交' if order['closing'] else '开仓成交',
-                   f"{order['symbol']} 模拟部分/全部成交 数量={qty} 价格={price} 手续费={fee} USDT",utc(fill['at_ns'])))
+                   f"{order['symbol']} {'探索模拟（未通过样本外验证）' if (old or positions.get(order['symbol'],{})).get('exploration') else '模拟'}部分/全部成交 数量={qty} 价格={price} 手续费={fee} USDT",utc(fill['at_ns'])))
 
     def tick(self):
         orders = self.journal.orders(active=True)

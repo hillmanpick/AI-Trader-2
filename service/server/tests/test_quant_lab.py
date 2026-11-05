@@ -185,6 +185,7 @@ def test_full_training_exports_auditable_artifact_with_three_purged_folds(tmp_pa
     assert not model['approved']  # no event holdout can be fabricated from quotes
     assert not model['execution_validation']['passed']
     assert len(model['coef'][0]) == len(FEATURES)
+    assert model['threshold'] == report['folds'][-1]['threshold']
 
 
 def dynamic_engine(tmp_path):
@@ -227,6 +228,110 @@ def test_missing_model_gate_never_blocks_existing_position_exit(tmp_path):
     e.execute('BTCUSDT','close',99,'stop','2')
     assert not db.get('positions')
     api.order.assert_not_called()
+
+
+def test_exploration_keeps_rejection_and_checks_age_integrity(tmp_path):
+    from quant.execution_policy import model_version
+    samples = [row(i,label=(i%3)-1) | {'label':(i%3)-1} for i in range(90)]
+    model = fit(samples) | {'approved':False,'trained_ms':int(time.time()*1000),'threshold':.6,'test':{}}
+    model['version'] = model_version(model)
+    path = tmp_path/'model.json'
+    path.write_text(json.dumps(model))
+    strict = LabConfig(directory=str(tmp_path),exploration_mode=False)
+    assert not model_status(strict)[0]['ready']
+    cfg = replace(strict,exploration_mode=True,exploration_threshold=.45)
+    status, candidate = model_status(cfg)
+    assert status['ready'] and status['exploration'] and not candidate['approved']
+    assert candidate['threshold'] == .45 and candidate['artifact_version'] == model['version']
+    assert json.loads(path.read_text()) == model
+    assert not model_status(cfg,now=model['trained_ms']+49*3600000)[0]['ready']
+    model['coef'][0][0] += 1
+    path.write_text(json.dumps(model))
+    assert not model_status(cfg)[0]['ready']
+
+
+def test_lab_step_uses_features_without_requesting_closed_candles(tmp_path):
+    e,db,api = dynamic_engine(tmp_path)
+    e.base_cfg = replace(e.base_cfg,strategy='lab_model',paper_lab_required=True,symbols=('BTCUSDT',))
+    e.cfg = e.base_cfg
+    e.ready = True
+    api.last_sync = time.time()
+    api.mark.return_value = 100
+    api.closed_candles.side_effect = ValueError('no candles available')
+    e.candle_cache.clear()
+    e.lab_signal = MagicMock(return_value='long')
+    e.execute = MagicMock()
+    e.step()
+    api.closed_candles.assert_not_called()
+    e.execute.assert_called_once()
+
+
+def test_lab_sizing_without_candles_shrinks_exploration_to_real_depth(tmp_path):
+    e,db,api = dynamic_engine(tmp_path)
+    e.cfg = replace(e.cfg,strategy='lab_model',paper_lab_required=True,paper_exploration_mode=True)
+    e.candle_cache.clear()
+    e.lab_gate = lambda symbol: True
+    e.lab_row = lambda symbol: row(int(time.time()*1000))
+    e.lab_risk_cap = lambda symbol,side,maximum: (maximum,{})
+    api.liquidity.return_value['ask_depth'] = 3220
+    e.execute('BTCUSDT','long',100,'lab_model','1')
+    p = db.get('positions')['BTCUSDT']
+    assert p['initial_margin'] < 2000
+    assert abs(p['amount'])*100 <= 161.000001
+    assert p['leverage'] >= 2
+    api.order.assert_not_called()
+
+
+def test_lab_rejects_stale_or_invalid_redis_feature(tmp_path):
+    from quant.lab_execution import LabExecution
+    lab = LabExecution.__new__(LabExecution)
+    lab.bus = MagicMock()
+    lab.bus.get.return_value = row(int(time.time()*1000)-11000)
+    with pytest.raises(ValueError,match='stale'):
+        lab.row('BTCUSDT')
+    lab.bus.get.return_value = row(int(time.time()*1000))
+    assert lab.row('BTCUSDT')['meta']['quality']
+    lab.bus.get.return_value['meta']['schema'] = 'bad'
+    with pytest.raises(ValueError):
+        lab.row('BTCUSDT')
+
+
+def test_exploration_rejects_live_or_credentials(tmp_path):
+    e,db,api = dynamic_engine(tmp_path)
+    cfg = replace(e.cfg,strategy='lab_model',paper_lab_required=True,paper_exploration_mode=True)
+    cfg.validate()
+    with pytest.raises(ValueError):
+        replace(cfg,api_key='test',api_secret='test').validate()
+    with pytest.raises(ValueError):
+        replace(cfg,mode='live',live_enabled=True,api_key='test',api_secret='test').validate()
+
+
+def test_lab_cost_gate_uses_same_target_floor_as_sizing(tmp_path,monkeypatch):
+    from quant.lab_execution import LabExecution
+    e,db,api = dynamic_engine(tmp_path)
+    lab = LabExecution.__new__(LabExecution)
+    lab.engine,lab.last_decision = e,{}
+    lab.model = {'version':'test'}
+    lab.status = {'exploration':True}
+    lab.gate = lambda symbol: True
+    sample = row(int(time.time()*1000))
+    sample['meta']['atr_proxy'] = .0008
+    lab.row = lambda symbol: sample
+    monkeypatch.setattr('quant.lab_execution.decide',lambda model,row: {'action':'long','confidence':.6})
+    assert lab.signal('BTCUSDT') == 'long'
+    lab.last_decision.clear()
+    sample['meta']['spread_bps'] = 10
+    assert lab.signal('BTCUSDT') == 'hold'
+    assert db.get('signal:BTCUSDT')['reason'] == 'Cost exceeds expected target space'
+
+
+def test_small_depth_order_filter_does_not_abort_other_candidates(tmp_path):
+    e,db,api = dynamic_engine(tmp_path)
+    api.quantity.side_effect = ValueError('Order below minimum notional; will not be increased')
+    e.execute('BTCUSDT','long',100,'test','1')
+    assert not db.get('positions',{})
+    assert db.get('sizing:BTCUSDT')['status'] == 'blocked'
+    assert 'minimum notional' in db.get('sizing:BTCUSDT')['reason']
 
 
 def test_feature_warmup_future_frames_trade_gaps_and_causality():
