@@ -35,7 +35,11 @@ class Notifier:
             self.store.set('report_slot',slot)
         if not self.cfg.mail_ready or time.monotonic() < self.next_attempt:
             return
-        pending = self.store.events(pending=True,limit=100)
+        summary_only = self.cfg.mode == 'paper' and self.cfg.paper_summary_only
+        # Filter in SQL before LIMIT: a quiet-night trade backlog must neither
+        # leak into mail nor starve the scheduled summary behind 100 trade rows.
+        pending = self.store.events(pending=True,limit=100,
+                                    kinds=('持仓报告',) if summary_only else None)
         if not pending:
             return
         message = build_message(self.cfg,pending,now)

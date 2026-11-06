@@ -95,11 +95,16 @@ def report_body(cfg, positions, status, account, now=None, performance=None):
     lines.append(f'持仓数量：{len(positions)} 个交易对')
     if performance:
         lines += [f'统计范围：{performance["scope"]}',
+                  f'累计盈利状态：{"盈利" if performance["net"]>0 else "亏损" if performance["net"]<0 else "持平"}',
                   f'累计已实现净盈亏：{number(performance["net"],6,signed=True)} USDT',
                   f'今日已实现净盈亏：{number(performance["today_net"],6,signed=True)} USDT',
                   f'近两小时已实现净盈亏：{number(performance["recent_net"],6,signed=True)} USDT',
                   f'累计已支付手续费（含未平仓）：{number(performance["fees"],6)} USDT',
                   '盈亏口径：按盘口模拟成交计算并扣除双边手续费，未计资金费。']
+        if 'completed_trades' in performance:
+            lines += [f'完整平仓交易：{performance["completed_trades"]} 笔（盈利 {performance["wins"]} 笔）',
+                      f'扣费后胜率：{number(performance["win_rate"]*100,2)}%',
+                      f'累计已实现毛盈亏（含滑点）：{number(performance["gross"],6,signed=True)} USDT']
     lines.append(f'当前总浮动盈亏：{number(sum(float(p.get("pnl",0)) for p in positions.values()),6,signed=True)} USDT')
     if not positions:
         lines.append('当前持仓：空仓')
@@ -182,7 +187,9 @@ def build_message(cfg, events, now=None):
                      f'<div style="font-size:18px;font-weight:700;color:{color}">{escape(event["kind"])}</div>'
                      f'<div style="margin:6px 0 14px;color:#64748b;font-size:12px">发生时间 · {happened} · 北京时间</div>'
                      f'{body_html(body)}</td></tr></table>')
-    footer = '所有时间均为北京时间（UTC+8）。开仓 / 清仓通知，每两小时持仓报告；00:00–08:00 静默，夜间事件早上补发。'
+    footer = ('所有时间均为北京时间（UTC+8）。模拟盘仅在 08:00、10:00、12:00、14:00、16:00、18:00、20:00、22:00 发送盈亏与持仓汇总；00:00–08:00 静默，不发送逐笔交易邮件。'
+              if cfg.mode == 'paper' and cfg.paper_summary_only else
+              '所有时间均为北京时间（UTC+8）。开仓 / 清仓通知，每两小时持仓报告；00:00–08:00 静默，夜间事件早上补发。')
     text.append(footer)
     message.set_content('\n'.join(text))
     html = f'''<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>

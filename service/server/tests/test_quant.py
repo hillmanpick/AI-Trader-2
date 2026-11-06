@@ -95,6 +95,42 @@ def test_night_event_is_queued_and_sent_after_eight(cfg):
         assert len(store.events())==2
 
 
+def test_paper_summary_mail_never_sends_trade_notices_and_filters_before_limit(cfg):
+    from dataclasses import replace
+    from datetime import datetime,timezone
+    cfg=replace(cfg,mode='paper',smtp_user='sender@qq.com',smtp_password='auth',mail_to='receiver@qq.com',
+                paper_summary_only=True)
+    store=Store(cfg.db_path)
+    for i in range(125):
+        store.event('开仓成交',f'fill {i}')
+    store.event('持仓报告','累计已实现净盈亏：-2 USDT')
+    notifier=Notifier(cfg,store)
+    with patch('quant.notifier.smtplib.SMTP_SSL') as smtp:
+        notifier.tick({},'running',datetime(2026,10,14,2,tzinfo=timezone.utc))
+        smtp.assert_called_once()
+        message=smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    plain=message.get_body(preferencelist=('plain',)).get_content()
+    assert '累计已实现净盈亏：-2 USDT' in plain
+    assert 'fill ' not in plain
+    with store.connect() as c:
+        assert c.execute('select count(*) from events where mailed_at is null').fetchone()[0]==125
+    assert len(store.events(pending=True,kinds=('持仓报告',)))==0
+
+
+def test_live_mail_keeps_trade_notices_when_paper_summary_mode_enabled(cfg):
+    from dataclasses import replace
+    from datetime import datetime,timezone
+    cfg=replace(cfg,mode='live',live_enabled=True,api_key='key',api_secret='secret',
+                smtp_user='sender@qq.com',smtp_password='auth',mail_to='receiver@qq.com',paper_summary_only=True)
+    store=Store(cfg.db_path)
+    store.event('开仓','live entry')
+    with patch('quant.notifier.smtplib.SMTP_SSL') as smtp:
+        Notifier(cfg,store).tick({},'observing',datetime(2026,10,14,2,tzinfo=timezone.utc))
+        plain=smtp.return_value.__enter__.return_value.send_message.call_args.args[0].get_body(
+            preferencelist=('plain',)).get_content()
+    assert 'live entry' in plain
+
+
 def test_mail_failure_retains_events(cfg):
     from dataclasses import replace
     cfg = replace(cfg,smtp_user='s@qq.com',smtp_password='auth',mail_to='r@qq.com')

@@ -61,6 +61,7 @@ class Settings:
     paper_entry_filter: str = 'shadow'
     paper_lab_required: bool = False
     paper_exploration_mode: bool = False
+    paper_summary_only: bool = False
     reflection_enabled: bool = field(default_factory=lambda: os.getenv('QUANT_REFLECTION_ENABLED', 'false').lower() == 'true')
     reflection_min_trades: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_MIN_TRADES', '12')))
     reflection_window: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_WINDOW', '50')))
@@ -184,6 +185,7 @@ class Settings:
             'paper_entry_filter': self.paper_entry_filter,
             'paper_lab_required': self.paper_lab_required,
             'paper_exploration_mode': self.paper_exploration_mode,
+            'paper_summary_only': self.paper_summary_only,
             'reflection_enabled': self.reflection_enabled and self.mode == 'paper',
             'reflection_min_trades': self.reflection_min_trades,
             'reflection_window': self.reflection_window,

@@ -55,11 +55,17 @@ class Store:
             c.execute('INSERT INTO kv VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', ('positions',json.dumps(positions)))
             c.execute('INSERT INTO events(kind,body,created_at) VALUES (?,?,?)', (kind,body,utcnow()))
 
-    def events(self, pending=False, limit=100):
+    def events(self, pending=False, limit=100, kinds=None):
         with self.connect() as c:
-            query = 'SELECT * FROM events' + (' WHERE mailed_at IS NULL' if pending else '')
+            clauses, params = (['mailed_at IS NULL'] if pending else []), []
+            if kinds is not None:
+                if not kinds:
+                    return []
+                clauses.append('kind IN ('+','.join('?' for _ in kinds)+')')
+                params.extend(kinds)
+            query = 'SELECT * FROM events' + (' WHERE '+' AND '.join(clauses) if clauses else '')
             query += ' ORDER BY id ' + ('ASC' if pending else 'DESC') + ' LIMIT ?'
-            return [dict(r) for r in c.execute(query,(limit,))]
+            return [dict(r) for r in c.execute(query,(*params,limit))]
 
     def mark_mailed(self, ids):
         with self.connect() as c:

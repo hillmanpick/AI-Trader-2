@@ -17,7 +17,8 @@ def paper_performance(store, now=None):
                          'JOIN execution_orders o ON o.id=f.order_id WHERE f.at_ns<=? ORDER BY f.at_ns,f.rowid',
                          (end_ns,)).fetchall()
     positions = {}
-    result = {'scope':'盘口模拟成交账本（不含旧策略历史和追加资金）','net':0.,'today_net':0.,'recent_net':0.,'fees':0.}
+    result = {'scope':'盘口模拟成交账本（不含旧策略历史和追加资金）','net':0.,'today_net':0.,'recent_net':0.,'fees':0.,
+              'gross':0.,'completed_trades':0,'wins':0,'win_rate':0.}
     for quantity,price,fee,stamp,raw in rows:
         o = json.loads(raw)
         qty,price,fee = float(quantity),float(price),float(fee)
@@ -32,12 +33,16 @@ def paper_performance(store, now=None):
             if o.get('reason') == 'paper_liquidation':
                 gross = max(gross-fee,-old['margin']*ratio)+fee
             net = gross-old['fee']*ratio-fee
+            old['cycle_net'] += net
+            result['gross'] += gross
             result['net'] += net
             if stamp>=day_ns:
                 result['today_net'] += net
             if stamp>=recent_ns:
                 result['recent_net'] += net
             if ratio>=1-1e-10:
+                result['completed_trades'] += 1
+                result['wins'] += int(old['cycle_net']>0)
                 positions.pop(o['symbol'])
             else:
                 old['quantity'] -= qty
@@ -50,5 +55,8 @@ def paper_performance(store, now=None):
                 'quantity':total,'side':o['side'],
                 'entry':((old['quantity']*old['entry'] if old else 0)+qty*price)/total,
                 'fee':(old['fee'] if old else 0)+fee,
+                'cycle_net':old['cycle_net'] if old else 0.,
                 'margin':(old['margin'] if old else 0)+qty*price/leverage}
+    if result['completed_trades']:
+        result['win_rate'] = result['wins']/result['completed_trades']
     return result

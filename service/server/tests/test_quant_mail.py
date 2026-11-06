@@ -53,6 +53,15 @@ def test_report_includes_net_returns_and_margin():
     assert '杠杆：5 倍' in body and '占用保证金：20 USDT' in body
 
 
+def test_paper_report_exposes_profit_status_and_win_rate():
+    body=report_body(Settings(mode='paper'),{},'running',{},performance={
+        'scope':'盘口模拟','net':-21.98,'today_net':-7.2,'recent_net':-.5,'fees':8.8,
+        'completed_trades':191,'wins':35,'win_rate':35/191,'gross':-13.1})
+    assert '累计盈利状态：亏损' in body
+    assert '完整平仓交易：191 笔（盈利 35 笔）' in body
+    assert '扣费后胜率：18.32%' in body
+
+
 def test_short_close_notice_profits_after_both_fees():
     from quant.mail_format import trade_notice_body
     n = {'symbol':'ETHUSDT','closing':True,'direction':'short','exploration':True,
