@@ -97,7 +97,7 @@ def register_quant_routes(app):
                 }
         except (OSError, ValueError, TypeError):
             performance = None
-        return {'source':'independent_paper', 'real_execution_enabled':False,
+        return {'source':'existing_paper', 'ledger':'existing_paper_account', 'real_execution_enabled':False,
                 'config':db.get('config',paper.public()), 'worker':worker, 'stale':age_seconds(worker.get('heartbeat')) > 180,
                 'paused':db.get('paused',False), 'daily_loss_blocked':db.get('daily_loss_blocked',False),
                 'account':account, 'performance':performance, 'positions':db.get('positions',{}),
