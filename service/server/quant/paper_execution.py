@@ -94,6 +94,9 @@ class PaperExecution:
                         'exploration':bool(context.get('exploration')),'model_approved':bool(context.get('model_approved')),
                         'feature_ts':context.get('feature_ts'),'strategy_version':e.reflection.active().get('version',1),
                         'entry_regime':context.get('regime','microstructure'),'mae_pct':0,'mfe_pct':0}
+            if context.get('ai_parameters') and not old:
+                p['ds_hold_seconds'] = context['ai_parameters']['hold_seconds']
+                p['autopilot_request'] = context.get('autopilot_request')
             p = p | {'amount':side*total,'entry':entry,'mark':price,'pnl':0,
                      'initial_margin':(old.get('initial_margin',0) if old else 0)+qty*price/leverage,
                      'entry_fee':(old.get('entry_fee',0) if old else 0)+fee,

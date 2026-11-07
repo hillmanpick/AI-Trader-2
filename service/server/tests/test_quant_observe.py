@@ -209,8 +209,6 @@ def test_advisor_json_has_no_execution_tools(cfg, decision, expected):
 def test_low_confidence_advice_becomes_wait(cfg):
     with patch('quant.ai_review.requests.Session',return_value=response({'bias':'bullish','confidence':.1,'reason':'weak','risk':'risk'})):
         assert DeepSeekAdvisor(cfg).analyze({'symbol':'BTCUSDT'}, {})['bias'] == 'wait'
-
-
 def test_analysis_does_not_send_balance_position_sizes_or_identifiers(cfg):
     store = Store(cfg.db_path)
     store.set('live_account', snapshot({'totalWalletBalance':'998877','totalMarginBalance':'998877'}, [row(2)]))

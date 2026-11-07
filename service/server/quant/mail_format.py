@@ -12,7 +12,8 @@ MODES = {'paper': '模拟交易', 'testnet': '测试网交易', 'live': '实盘�
 STATUSES = {'observing': '只读观察（自动交易关闭）', 'observation_error': '实盘只读同步异常', 'running': '运行中', 'blocked': '运行受阻', 'paused_entries': '已暂停开新仓', 'not_started': '尚未启动'}
 REASONS = {'stop_loss': '触发止损', 'take_profit': '触发止盈', 'sma_cross': '均线交叉信号', 'bollinger': '布林带信号', 'protection_failure': '保护单异常'}
 REASONS.update({'dynamic_stop':'动态止损 / 移动止损','dynamic_take_profit':'动态止盈',
-                'model_horizon':'模型持仓时间到期','paper_liquidation':'模拟强平','lab_model':'数值模型方向信号'})
+                'model_horizon':'计划持仓时间到期','paper_liquidation':'模拟强平','lab_model':'数值模型方向信号',
+                'deepseek_autopilot':'DeepSeek 自主决策'})
 ISO_TIME = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?')
 NUM = r'[-+\d.eE]+'
 

@@ -38,6 +38,26 @@ def test_dynamic_leverage_falls_with_volatility_and_never_tightens_stop():
     assert low['notional'] == low['margin']*low['leverage']
     with pytest.raises(ValueError,match='minimum leverage'):
         plan(notional_cap=3999)
+
+
+def test_ds_entry_parameters_are_revalidated_and_hard_capped_by_paper_executor(tmp_path):
+    e,db,api = dynamic_engine(tmp_path)
+    e.cfg = replace(e.cfg,strategy='lab_model',paper_lab_required=True,paper_ai_autopilot=True,
+                    paper_exploration_mode=True)
+    e.lab_gate = lambda symbol: True
+    e.lab_row = lambda symbol: row(int(time.time()*1000))
+    e.lab_risk_cap = lambda symbol,side,maximum: (maximum,{})
+    db.set('entry_context:BTCUSDT',{'ai_parameters':{'margin_usdt':999999,'leverage':100,
+        'stop_loss_pct':.005,'take_profit_pct':.01,'hold_seconds':600},
+        'strategy':'ds_autopilot','model_approved':False,'exploration':True})
+    api.liquidity.return_value.update(ask_depth=1e8,bid_depth=1e8)
+    e.execute('BTCUSDT','long',100,'deepseek_autopilot','one')
+    p=db.get('positions')['BTCUSDT']
+    assert p['initial_margin']==2000
+    assert p['leverage']<=20
+    assert p['exit_plan']['planned_risk_usdt']<=200
+    assert p['stop_pct']<=.005
+    api.order.assert_not_called()
     with pytest.raises(ValueError,match='minimum leverage'):
         plan(remaining_risk=1)
 

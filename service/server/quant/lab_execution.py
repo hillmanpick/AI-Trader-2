@@ -20,6 +20,10 @@ class LabExecution:
         self.model, self.status = None, {}
         self.last_refresh = 0
         self.event_cursor = '0-0'
+        self.autopilot = None
+        if engine.cfg.paper_ai_autopilot:
+            from .paper_autopilot import PaperAutopilot
+            self.autopilot = PaperAutopilot(engine,self)
 
     def start_event_listener(self, wake):
         def listen():
@@ -41,10 +45,12 @@ class LabExecution:
         e = self.engine
         if e.cfg.mode != 'paper' or e.cfg.api_key or e.cfg.api_secret or e.cfg.live_enabled:
             raise RuntimeError('Model execution cannot access a real account')
+        candidate_ok = False
         try:
             candidate = self.bus.get('candidates') or {}
             if not 0 <= time.time()*1000-candidate.get('ts',0) <= 650000:
                 raise ValueError('Candidate pool stale')
+            candidate_ok = True
             symbols = tuple(candidate.get('symbols',[]))
             # Preserve open-position exits and in-flight reviews on pool rotation.
             symbols = tuple(dict.fromkeys(symbols+tuple(e.store.get('positions',{}))+tuple(e.review_jobs)))
@@ -60,6 +66,12 @@ class LabExecution:
         except Exception:
             self.status = {'ready':False,'reason':'Redis 或动态币池暂不可用，禁止新仓'}
             self.model = None
+        if self.autopilot:
+            state = self.bus.get('state') or {}
+            self.status = {'ready':bool(candidate_ok and self.cfg.enabled and 0 <= time.time()*1000-state.get('ts',0) <= 15000
+                                       and state.get('ready_symbols')),
+                'approved':False,'exploration':True,'decision_source':'deepseek_autopilot',
+                'reason':'DS 自主模拟：使用实时盘口数据；不代表策略已通过盈利验证'}
         e.store.set('lab_gate',self.status | {'at':utcnow()})
 
     def row(self,symbol):
@@ -82,7 +94,7 @@ class LabExecution:
 
     def gate(self,symbol):
         self.refresh()
-        if not self.cfg.enabled or not self.status.get('ready') or not self.model:
+        if not self.cfg.enabled or not self.status.get('ready') or (not self.model and not getattr(self,'autopilot',None)):
             return False
         if self.status.get('exploration') and not self.engine.cfg.paper_exploration_mode:
             return False
@@ -103,6 +115,8 @@ class LabExecution:
             return 'hold'
         try:
             row = self.row(symbol)
+            if getattr(self,'autopilot',None):
+                return self.autopilot.signal(symbol)
             if self.last_decision.get(symbol) == row['ts']:
                 return 'hold'
             self.last_decision[symbol] = row['ts']

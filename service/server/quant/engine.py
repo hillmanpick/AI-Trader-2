@@ -72,6 +72,17 @@ class Engine:
                 # 2,000 USDT is a budget ceiling for exploration. Shallow books
                 # must reduce the virtual order instead of inventing liquidity.
                 margin = min(margin, cap/min_leverage)
+            if self.cfg.paper_ai_autopilot:
+                parameters = self.store.get('entry_context:'+symbol,{}).get('ai_parameters')
+                if not parameters:
+                    raise ValueError('Missing fresh DS entry parameters')
+                margin = min(margin,float(parameters['margin_usdt']))
+                max_leverage = min(max_leverage,int(parameters['leverage']))
+                override = {'atr':atr*price,'stop_pct':float(parameters['stop_loss_pct']),
+                            'take_pct':float(parameters['take_profit_pct']),'regime':'ds_autopilot'}
+                cost = 2*(self.cfg.fee_rate+self.cfg.paper_slippage)+liquidity['spread_bps']/10000
+                if override['take_pct']<=cost*1.5:
+                    raise ValueError('DS target does not cover trading costs')
             return dynamic_leverage_plan(
                 bars, price, margin, self.cfg.fee_rate,
                 self.cfg.paper_slippage+liquidity['spread_bps']/20000, min_leverage,
@@ -406,7 +417,7 @@ class Engine:
                 return
             amount = -old['amount']
         else:
-            if not self.reflection.allows(symbol):
+            if not self.cfg.paper_ai_autopilot and not self.reflection.allows(symbol):
                 return
             if old:
                 return
@@ -544,7 +555,8 @@ class Engine:
                     if self.cfg.strategy == 'lab_model':
                         from .lab_config import LabConfig
                         opened = datetime.fromisoformat(p['opened_at']).timestamp()
-                        if time.time()-opened >= LabConfig().horizon_seconds:
+                        horizon = p.get('ds_hold_seconds',LabConfig().horizon_seconds)
+                        if time.time()-opened >= horizon:
                             exit_reason = 'model_horizon'
                     positions = self.store.get('positions',{})
                     positions[symbol] = p
@@ -566,8 +578,12 @@ class Engine:
                 # This strategy's direction and volatility come from fresh
                 # Redis features; candle readiness belongs to candle strategies.
                 model_action = getattr(self,'lab_signal',lambda s:'hold')(symbol)
-                if model_action in ('long','short') and not p and self.cfg.enabled and not self.store.get('paused',False):
-                    self.execute(symbol,model_action,price,'lab_model',str(int(time.time()*1000)))
+                if model_action == 'close' and p and self.cfg.enabled:
+                    self.execute(symbol,'close',price,'deepseek_autopilot',utcnow())
+                elif model_action in ('long','short') and not p and self.cfg.enabled and not self.store.get('paused',False):
+                    self.execute(symbol,model_action,price,
+                                 'deepseek_autopilot' if self.cfg.paper_ai_autopilot else 'lab_model',
+                                 str(int(time.time()*1000)))
                 continue
             # Cache closed candles until next expected close; poll mark prices separately.
             now = int(datetime.now(timezone.utc).timestamp()*1000)+self.exchange.offset

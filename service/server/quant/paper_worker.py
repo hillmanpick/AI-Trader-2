@@ -46,6 +46,8 @@ def main():
             if lab:
                 lab.refresh()
                 engine.paper_execution.tick()
+                if lab.autopilot:
+                    lab.autopilot.tick()
             status = engine.step()
             last_error = None
         except Exception as exc:

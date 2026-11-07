@@ -6,7 +6,7 @@ import { formatLeverage } from './positionFormat'
 
 type Position = { amount: number; entry: number; mark: number; pnl: number; leverage?: number }
 type Snapshot = {
-  config: { observation_only: boolean; ai_advice_seconds: number; execution_enabled: boolean; mode: string; strategy: string; interval: string; symbols: string[]; order_notional: number; max_notional: number; leverage: number; stop_pct: number; take_pct: number; credentials_configured: boolean; mail_configured: boolean; ai_enabled: boolean; ai_configured: boolean; ai_model: string; community_enabled: boolean }
+  config: { observation_only: boolean; ai_advice_seconds: number; execution_enabled: boolean; mode: string; strategy: string; interval: string; symbols: string[]; order_notional: number; max_notional: number; leverage: number; stop_pct: number; take_pct: number; credentials_configured: boolean; mail_configured: boolean; ai_enabled: boolean; ai_configured: boolean; ai_model: string; community_enabled: boolean; paper_ai_autopilot?: boolean }
   worker: { status: string; error?: string; heartbeat?: string; market_stream?: { status?: string; reconnects?: number; fresh_marks?: number } }
   stale: boolean; paused: boolean; daily_loss_blocked: boolean
   ai_advice?: { status: string; at?: string; completed_at?: string; reason?: string; model?: string; symbols?: Record<string, { status: string; bias: string; confidence: number; reason: string; risk: string; price: number; rule_candidate: string }> }

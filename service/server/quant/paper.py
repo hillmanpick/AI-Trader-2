@@ -48,6 +48,8 @@ def paper_settings(base):
                   paper_entry_filter=os.getenv('QUANT_PAPER_ENTRY_FILTER','shadow'),
                   paper_lab_required=os.getenv('QUANT_PAPER_LAB_REQUIRED','false').lower() == 'true',
                   paper_exploration_mode=os.getenv('QUANT_PAPER_EXPLORATION_MODE','false').lower() == 'true',
+                  paper_ai_autopilot=os.getenv('QUANT_PAPER_AI_AUTOPILOT','false').lower() == 'true',
+                  paper_ai_autopilot_interval=int(os.getenv('QUANT_PAPER_AI_AUTOPILOT_INTERVAL_SECONDS','60')),
                   paper_summary_only=os.getenv('QUANT_PAPER_MAIL_SUMMARY_ONLY','true').lower() == 'true',
                   reflection_enabled=os.getenv('QUANT_PAPER_REFLECTION_ENABLED','true').lower() == 'true',
                   reflection_min_trades=int(os.getenv('QUANT_PAPER_REFLECTION_MIN_TRADES', str(base.reflection_min_trades))),

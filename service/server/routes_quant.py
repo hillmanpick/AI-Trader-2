@@ -106,6 +106,7 @@ def register_quant_routes(app):
                 'entry_quality':{s:db.get(f'entry_quality:{s}') for s in symbols},
                 'reflection':StrategyReflector(db, paper).status(),
                 'lab_gate':db.get('lab_gate',{}),
+                'autopilot':db.get('autopilot',{}),
                 'execution_statistics':db.get('execution_statistics',{}),
                 'execution_closed_fills':db.get('execution_closed_fills',[])[-30:],
                 'sizing':{s:db.get(f'sizing:{s}') for s in db.get('config',paper.public()).get('symbols',[])},

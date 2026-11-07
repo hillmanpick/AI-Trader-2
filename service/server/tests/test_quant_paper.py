@@ -61,6 +61,32 @@ def test_paper_review_overrides_leave_observer_settings_unchanged(setup, monkeyp
     assert not cfg.api_key and not cfg.api_secret
 
 
+def test_paper_autopilot_requires_credential_free_lab_simulation(setup, monkeypatch):
+    base, _ = setup
+    monkeypatch.setenv('QUANT_PAPER_LAB_REQUIRED','true')
+    monkeypatch.setenv('QUANT_PAPER_DYNAMIC_LEVERAGE','true')
+    monkeypatch.setenv('QUANT_PAPER_DYNAMIC_EXITS','true')
+    monkeypatch.setenv('QUANT_PAPER_MARGIN_USDT','2000')
+    monkeypatch.setenv('QUANT_PAPER_MAX_MARGIN_USDT','6000')
+    monkeypatch.setenv('QUANT_PAPER_MAX_LEVERAGE','20')
+    monkeypatch.setenv('QUANT_PAPER_STRATEGY','lab_model')
+    monkeypatch.setenv('QUANT_PAPER_AI_AUTOPILOT','true')
+    cfg = paper_settings(base)
+    assert cfg.paper_ai_autopilot and cfg.paper_ai_autopilot_interval == 60
+    assert cfg.public()['paper_ai_autopilot'] is True
+    assert cfg.mode == 'paper' and not cfg.live_enabled and not cfg.api_key and not cfg.api_secret
+
+
+def test_paper_autopilot_is_rejected_without_lab_or_if_not_paper(setup, monkeypatch):
+    base, _ = setup
+    monkeypatch.setenv('QUANT_PAPER_AI_AUTOPILOT','true')
+    with pytest.raises(ValueError, match='lab mode'):
+        paper_settings(base)
+    cfg = replace(base,paper_ai_autopilot=True)
+    with pytest.raises(ValueError):
+        cfg.validate()
+
+
 @pytest.mark.parametrize('name,value', [('QUANT_PAPER_AI_MIN_CONFIDENCE', '1.1'),
                                       ('QUANT_PAPER_AI_REVIEW_MAX_AGE_SECONDS', '301')])
 def test_invalid_paper_review_settings_fail_validation(setup, monkeypatch, name, value):
