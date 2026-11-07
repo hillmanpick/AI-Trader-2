@@ -82,10 +82,25 @@ def register_quant_routes(app):
         db = Store(paper.db_path)
         worker = db.get('worker', {'status':'not_started'})
         symbols = db.get('config',paper.public()).get('symbols',paper.symbols)
+        account = db.get('account',{})
+        performance = None
+        try:
+            from quant.paper_performance import paper_performance
+            performance = paper_performance(db)
+            if performance is not None:
+                positions = db.get('positions',{})
+                performance |= {
+                    'total_balance': account.get('equity'),
+                    'wallet_balance': account.get('wallet'),
+                    'available_balance': account.get('available'),
+                    'unrealized': sum(float(p.get('pnl',0) or 0) for p in positions.values()),
+                }
+        except (OSError, ValueError, TypeError):
+            performance = None
         return {'source':'independent_paper', 'real_execution_enabled':False,
                 'config':db.get('config',paper.public()), 'worker':worker, 'stale':age_seconds(worker.get('heartbeat')) > 180,
                 'paused':db.get('paused',False), 'daily_loss_blocked':db.get('daily_loss_blocked',False),
-                'account':db.get('account',{}), 'positions':db.get('positions',{}),
+                'account':account, 'performance':performance, 'positions':db.get('positions',{}),
                 'signals':{s:db.get(f'signal:{s}') for s in symbols},
                 'ai':{s:db.get(f'ai:{s}') for s in symbols},
                 'entry_quality':{s:db.get(f'entry_quality:{s}') for s in symbols},

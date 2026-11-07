@@ -9,6 +9,7 @@ def paper_performance(store, now=None):
     local = local_time(now)
     end_ns = int(local.timestamp()*1e9)
     day_ns = int(local.replace(hour=0,minute=0,second=0,microsecond=0).timestamp()*1e9)
+    yesterday_ns = int((local.replace(hour=0,minute=0,second=0,microsecond=0)-timedelta(days=1)).timestamp()*1e9)
     recent_ns = int((local-timedelta(hours=2)).timestamp()*1e9)
     with store.connect() as c:
         if not c.execute("SELECT 1 FROM sqlite_master WHERE name='execution_fills'").fetchone():
@@ -18,7 +19,7 @@ def paper_performance(store, now=None):
                          (end_ns,)).fetchall()
     positions = {}
     result = {'scope':'盘口模拟成交账本（不含旧策略历史和追加资金）','net':0.,'today_net':0.,'recent_net':0.,'fees':0.,
-              'gross':0.,'completed_trades':0,'wins':0,'win_rate':0.}
+              'yesterday_net':0.,'gross':0.,'completed_trades':0,'wins':0,'win_rate':0.}
     for quantity,price,fee,stamp,raw in rows:
         o = json.loads(raw)
         qty,price,fee = float(quantity),float(price),float(fee)
@@ -38,6 +39,8 @@ def paper_performance(store, now=None):
             result['net'] += net
             if stamp>=day_ns:
                 result['today_net'] += net
+            elif stamp>=yesterday_ns:
+                result['yesterday_net'] += net
             if stamp>=recent_ns:
                 result['recent_net'] += net
             if ratio>=1-1e-10:

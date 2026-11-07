@@ -739,6 +739,7 @@ def test_paper_partial_fills_update_wallet_margin_and_reduce_only_atomically(tmp
     performance = paper_performance(db,datetime.fromtimestamp(start/1e9+1,timezone.utc))
     assert performance['net']==pytest.approx(-13.5015)
     assert performance['recent_net']==pytest.approx(-13.5015)
+    assert paper_performance(db,datetime.fromtimestamp(start/1e9+86401,timezone.utc))['yesterday_net']==pytest.approx(-13.5015)
     assert performance['fees']==pytest.approx(.5015)
     db.set('paper_balance',1000000)  # cash additions never change trading PnL
     assert paper_performance(db,datetime.fromtimestamp(start/1e9+1,timezone.utc))['net']==pytest.approx(-13.5015)

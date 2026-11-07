@@ -3,10 +3,16 @@ import { beijingTime } from './officialData'
 import { formatLeverage } from './positionFormat'
 
 const fmt = (value: unknown, digits = 2) => value == null || !Number.isFinite(Number(value)) ? '—' : Number(value).toLocaleString('zh-CN', { maximumFractionDigits: digits })
+const signedFmt = (value: unknown, digits = 2) => {
+  if (value == null || !Number.isFinite(Number(value))) return '—'
+  const amount = Number(value)
+  return `${amount > 0 ? '+' : ''}${amount.toLocaleString('zh-CN', { maximumFractionDigits: digits })}`
+}
 
 export function PaperAccount() {
   const [data, setData] = useState<any>(null)
   const [error, setError] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
   useEffect(() => {
     let active = true
     const load = async () => {
@@ -31,6 +37,12 @@ export function PaperAccount() {
     {error && <p role="alert">{error}</p>}
     {!data ? <p>正在读取模拟账户…</p> : <>
       <p>状态：{data.stale ? '进程心跳过期' : names[data.worker.status] || data.worker.status} · 最后心跳 {beijingTime(data.worker.heartbeat)}（UTC+8）</p>
+      <div className="paper-performance-grid" aria-label="模拟盘收益摘要">
+        <div className="paper-performance-card paper-performance-balance"><span>总余额</span><strong>{fmt(data.performance?.total_balance ?? data.account.equity)} USDT</strong><small>权益，包含当前浮动盈亏</small></div>
+        <div className="paper-performance-card"><span>今日盈利</span><strong className={(data.performance?.today_net || 0) >= 0 ? 'is-profit' : 'is-loss'}>{signedFmt(data.performance?.today_net)} USDT</strong><small>北京时间 00:00 起</small></div>
+        <div className="paper-performance-card"><span>昨日盈利</span><strong className={(data.performance?.yesterday_net || 0) >= 0 ? 'is-profit' : 'is-loss'}>{signedFmt(data.performance?.yesterday_net)} USDT</strong><small>北京时间上一自然日</small></div>
+        <div className="paper-performance-card"><span>全部盈利</span><strong className={(data.performance?.net || 0) >= 0 ? 'is-profit' : 'is-loss'}>{signedFmt(data.performance?.net)} USDT</strong><small>已实现净盈亏，已扣手续费</small></div>
+      </div>
       <p>行情通道：{data.worker.market_stream?.status === 'connected' ? 'WebSocket 实时行情已收到' : data.worker.market_stream?.status === 'no_market_events' ? 'WebSocket 暂无行情帧，使用 REST 回退并重试' : data.worker.market_stream?.status === 'reconnecting' ? `WebSocket 重连中（${data.worker.market_stream.reconnects || 0} 次），使用 REST 回退` : '等待 WebSocket · REST 回退可用'} · 新鲜标记价 {data.worker.market_stream?.fresh_marks || 0}/{data.config.symbols.length}</p>
       {data.worker.error && <p role="alert" style={{ color: '#edac65' }}>{data.worker.error}</p>}
       <p><strong>新仓模拟杠杆：{data.config.paper_dynamic_leverage ? `${data.config.paper_min_leverage}–${data.config.paper_max_leverage} 倍动态计算（BTC/ETH 上限 ${data.config.paper_major_max_leverage} 倍）` : formatLeverage(data.config.leverage)}</strong> · 当前虚拟钱包 {fmt(data.account.wallet)} USDT · 新仓每仓保证金 {fmt(data.config.paper_margin || data.config.order_notional / data.config.leverage)} USDT · 总保证金上限 {fmt(data.config.paper_max_margin || data.config.max_notional / data.config.leverage)} USDT · 最多 {data.config.max_positions} 个仓位</p>
@@ -47,9 +59,13 @@ export function PaperAccount() {
       {Object.entries(data.positions || {}).length ? <div className="table-container"><table className="table"><thead><tr><th>合约</th><th>方向</th><th>杠杆</th><th>开仓保证金</th><th>计划风险</th><th>MAE / MFE</th><th>数量</th><th>入场价</th><th>标记价</th><th>模拟浮盈亏</th><th>移动止损价</th><th>动态止盈价</th></tr></thead><tbody>{Object.entries(data.positions).map(([symbol, raw]) => { const p = raw as any; return <tr key={symbol}><td>{symbol}</td><td>{p.amount > 0 ? '多' : '空'}</td><td><strong>{formatLeverage(p.leverage)}</strong></td><td><strong>{fmt(p.initial_margin)} USDT</strong></td><td>{fmt(p.exit_plan?.planned_risk_usdt)} USDT</td><td>{fmt((p.mae_pct || 0) * 100)}% / {fmt((p.mfe_pct || 0) * 100)}%</td><td>{fmt(Math.abs(p.amount), 8)}</td><td>{fmt(p.entry, 6)}</td><td>{fmt(p.mark, 6)}</td><td>{fmt(p.pnl, 4)} USDT</td><td>{fmt(p.stop_price, 6)}</td><td>{fmt(p.take_price, 6)}</td></tr> })}</tbody></table></div> : <p>独立模拟账户当前空仓。</p>}
       <h3>{data.config.strategy === 'lab_model' ? '数值模型信号' : '模拟信号与 AI 审核'}</h3>
       {data.config.symbols.map((symbol: string) => <article key={symbol}><strong>{symbol} · {actions[data.signals?.[symbol]?.action] || '等待下一根收盘 K 线'}</strong>{data.ai?.[symbol] && <><p>{data.ai[symbol].decision === 'allow' ? 'AI 放行' : 'AI 未放行'}：{data.ai[symbol].reason} · {beijingTime(data.ai[symbol].at)}</p>{data.ai[symbol].telemetry?.usage && <p>本次输入 {fmt(data.ai[symbol].telemetry.usage.prompt_tokens, 0)} tokens · 缓存命中 {fmt(data.ai[symbol].telemetry.usage.prompt_cache_hit_tokens, 0)} · 未命中 {fmt(data.ai[symbol].telemetry.usage.prompt_cache_miss_tokens, 0)} · 命中率 {fmt((data.ai[symbol].telemetry.usage.prompt_cache_hit_rate || 0) * 100, 2)}%</p>}</>}</article>)}
-      <h3>最近模拟事件</h3>
-      {(data.events || []).slice(0, 8).map((event: any) => <article key={event.id}><strong>{event.kind}</strong> · {beijingTime(event.created_at)}<p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{event.body}</p></article>)}
-      {!data.events?.length && <p>暂无模拟成交或事件。</p>}
+      <details className="paper-history" open={historyOpen} onToggle={(event) => setHistoryOpen(event.currentTarget.open)}>
+        <summary>开仓历史记录（{(data.events || []).filter((event: any) => String(event.kind).includes('开仓')).length} 条，默认收起）</summary>
+        <div className="paper-history-list">
+          {(data.events || []).filter((event: any) => String(event.kind).includes('开仓')).slice(0, 30).map((event: any) => <article key={event.id}><strong>{event.kind}</strong> · {beijingTime(event.created_at)}<p style={{ whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>{event.body}</p></article>)}
+          {!(data.events || []).some((event: any) => String(event.kind).includes('开仓')) && <p>暂无开仓记录。</p>}
+        </div>
+      </details>
     </>}
   </section>
 }
