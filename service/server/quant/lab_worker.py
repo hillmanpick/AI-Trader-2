@@ -40,6 +40,7 @@ class Collector:
         self.rules, self.tickers, self.books, self.event_ms = {}, {}, {}, {}
         self.buffers, self.snapshot_tasks = {}, {}
         self.selected = ()
+        self.held = ()
         self.trade_archive_until = {}
         # Resume pending label horizons after restart even if the new pool has
         # not been selected yet. Features are durable; no extra raw pool is needed.
@@ -69,9 +70,12 @@ class Collector:
         # subscribed for one label/position horizon so a rotating pool does not
         # manufacture a feed disconnect in an otherwise continuous replay.
         self.depth_symbols = ()
-        self.depth_grace_until = {}
+        self.depth_grace_until = dict(self.trade_archive_until)
         self.depth_update_event = None
         self.stream_command_id = 0
+        self.depth_confirmed = ()
+        self.depth_commands_acked = 0
+        self.depth_pending = 0
         self.repair_gate = asyncio.Semaphore(2)
         self.repair_lock = asyncio.Lock()
         self.last_repair_call = 0.
@@ -110,6 +114,8 @@ class Collector:
             if expiry < now_ms:
                 self.trade_archive_until.pop(symbol, None)
         for symbol in set(selected)-previous:
+            if (symbol in self.depth_symbols or now_ms <= self.trade_archive_until.get(symbol,0)) and symbol in self.builder.last_trade:
+                continue
             checkpoint = self.trade_checkpoints.get(symbol)
             if checkpoint is None:
                 self.builder.last_trade.pop(symbol, None)
@@ -121,7 +127,9 @@ class Collector:
 
     def archives_trade(self, symbol, now_ms=None):
         now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
-        return symbol in self.selected or now_ms <= self.trade_archive_until.get(symbol, 0)
+        return (symbol in self.selected or symbol in self.held
+                or symbol in self.depth_symbols or symbol in self.depth_confirmed
+                or now_ms <= self.trade_archive_until.get(symbol, 0))
 
     def depth_subscription_symbols(self, selected, now_ms, held=()):
         selected = set(selected)
@@ -266,6 +274,8 @@ class Collector:
     async def drop_depth_feed(self, symbols):
         """Remove an expired subscription without recording a feed disconnect."""
         symbols = tuple(symbols)
+        if not symbols:
+            return
         tasks = {s:self.snapshot_tasks[s] for s in symbols if s in self.snapshot_tasks}
         for task in tasks.values():
             task.cancel()
@@ -276,6 +286,8 @@ class Collector:
         for symbol in symbols:
             self.books.pop(symbol,None)
             self.buffers.pop(symbol,None)
+        await self.record_event({'e':'depthStatus','s':'','symbols':list(symbols),
+            'status':'retired','reason':'candidate_observation_expired'},'control')
         try:
             await asyncio.to_thread(self.bus.client.delete,
                 *(f'quant:lab:{kind}:{s}' for s in symbols for kind in ('book','liquidity')))
@@ -392,11 +404,11 @@ class Collector:
             # exact source records and ID continuity, but never feed a zero
             # price into returns or reconnect a whole shard because of one.
             self.trade_notices += 1
-            if symbol in self.selected:
+            if self.archives_trade(symbol,received_ns//1000000):
                 self.builder.last_trade[symbol] = identity
             return
         self.ranker.trade(event)
-        if symbol in self.selected:
+        if self.archives_trade(symbol,received_ns//1000000):
             self.builder.trade(event | {'a':identity},received_ns//1000000)
 
     async def trade_stream(self, symbols, shard_id=0):
@@ -430,12 +442,32 @@ class Collector:
             await asyncio.sleep(delay)
             delay = min(30,delay*2)
 
+    async def candidate_trade_streams(self):
+        """Candidate-only mode must rotate trades alongside depth."""
+        symbols, task = (), None
+        try:
+            while True:
+                desired = tuple(self.depth_symbols)
+                if desired != symbols:
+                    if task:
+                        task.cancel()
+                        await asyncio.gather(task,return_exceptions=True)
+                    symbols = desired
+                    task = asyncio.create_task(self.trade_stream(symbols)) if symbols else None
+                if task and task.done():
+                    task.result()
+                await asyncio.sleep(1)
+        finally:
+            if task:
+                task.cancel()
+                await asyncio.gather(task,return_exceptions=True)
+
     async def micro(self,symbols):
         self.depth_update_event = asyncio.Event()
         self.request_depth_subscriptions(symbols)
         tasks = [asyncio.create_task(self.public_stream(symbols))]
         if not self.cfg.all_market_trades:
-            tasks.append(asyncio.create_task(self.trade_stream(symbols)))
+            tasks.append(asyncio.create_task(self.candidate_trade_streams()))
         try:
             await asyncio.gather(*tasks)
         finally:
@@ -451,30 +483,42 @@ class Collector:
                 streams = '/'.join(f'{s.lower()}@{kind}' for s in initial for kind in ('bookTicker','depth@100ms'))
                 async with self.session.ws_connect('wss://fstream.binance.com/public/stream?streams='+streams,heartbeat=20) as ws:
                     subscribed = set(initial)
+                    self.depth_confirmed = tuple(sorted(subscribed))
+                    pending = {}
+                    last_data = time.monotonic()
                     await self.reset_depth_feed(subscribed,'connected')
                     while True:
                         # Binance supports SUBSCRIBE/UNSUBSCRIBE on the same
                         # public socket. Rotation therefore does not reset all
                         # books and does not create artificial replay gaps.
-                        if self.depth_update_event and self.depth_update_event.is_set():
+                        if any(time.monotonic()-p['sent']>10 for p in pending.values()):
+                            raise TimeoutError('Depth subscription acknowledgment timed out')
+                        if time.monotonic()-last_data > 30:
+                            raise TimeoutError('Depth socket received no market data for 30s')
+                        if not pending and self.depth_update_event and self.depth_update_event.is_set():
                             self.depth_update_event.clear()
                             desired = set(self.depth_symbols)
                             added, removed = desired-subscribed, subscribed-desired
                             if added:
                                 self.stream_command_id += 1
+                                # Prepare before sending: frames may precede the
+                                # ACK, but membership is confirmed only by ACK.
+                                await self.reset_depth_feed(added,'connected')
                                 await ws.send_json({'method':'SUBSCRIBE','params':[
                                     f'{s.lower()}@{kind}' for s in sorted(added)
                                     for kind in ('bookTicker','depth@100ms')],
                                     'id':self.stream_command_id})
-                                await self.reset_depth_feed(added,'connected')
+                                pending[self.stream_command_id] = {
+                                    'add':added,'remove':set(),'sent':time.monotonic()}
                             if removed:
                                 self.stream_command_id += 1
                                 await ws.send_json({'method':'UNSUBSCRIBE','params':[
                                     f'{s.lower()}@{kind}' for s in sorted(removed)
                                     for kind in ('bookTicker','depth@100ms')],
                                     'id':self.stream_command_id})
-                                await self.drop_depth_feed(removed)
-                            subscribed = desired
+                                pending[self.stream_command_id] = {
+                                    'add':set(),'remove':removed,'sent':time.monotonic()}
+                            self.depth_pending = len(pending)
                         try:
                             frame = await asyncio.wait_for(ws.receive(),timeout=1)
                         except asyncio.TimeoutError:
@@ -482,12 +526,29 @@ class Collector:
                         if frame.type != aiohttp.WSMsgType.TEXT:
                             raise ConnectionError('Microstructure connection closed')
                         payload = json.loads(frame.data)
+                        if 'code' in payload:
+                            raise ConnectionError('Depth subscription rejected')
+                        if 'id' in payload:
+                            change = pending.pop(payload['id'],None)
+                            if 'code' in payload or payload.get('result','missing') is not None:
+                                raise ConnectionError('Depth subscription rejected')
+                            if change:
+                                subscribed.update(change['add'])
+                                subscribed.difference_update(change['remove'])
+                                if change['remove']:
+                                    await self.drop_depth_feed(change['remove'])
+                                self.depth_confirmed = tuple(sorted(subscribed))
+                                self.depth_commands_acked += 1
+                                self.depth_pending = len(pending)
+                            continue
                         event = payload.get('data',payload)
                         received_ns = time.time_ns()
                         now = received_ns//1000000
                         s = event.get('s')
-                        if s not in subscribed:
+                        observing = subscribed | set().union(*(p['add'] for p in pending.values()))
+                        if s not in observing:
                             continue
+                        last_data = time.monotonic()
                         self.record(event)
                         kind = event.get('e')
                         if kind == 'depthUpdate':
@@ -501,20 +562,24 @@ class Collector:
                             self.quote_count = getattr(self,'quote_count',0)+1
                         delay = 1
             except asyncio.CancelledError:
-                await self.reset_depth_feed(self.depth_symbols or symbols,'disconnected')
+                self.depth_confirmed, self.depth_pending = (), 0
+                await self.reset_depth_feed(set(self.books)|set(self.depth_symbols),'disconnected')
                 raise
             except Exception as exc:
                 logging.warning('Microstructure stream: %s',type(exc).__name__)
+                self.depth_confirmed, self.depth_pending = (), 0
                 self.reconnects += 1
-                await self.reset_depth_feed(self.depth_symbols or symbols,'disconnected')
+                await self.reset_depth_feed(set(self.books)|set(self.depth_symbols),'disconnected')
             await asyncio.sleep(delay)
             delay = min(30,delay*2)
 
-    def flush(self, samples, raw):
+    def flush(self, samples, raw, quotes=()):
         for row in raw:
             self.archive.append(row)
         self.archive.flush()
         self.store.append(samples)
+        feature_keys = {(r['symbol'],r['ts']) for r in samples}
+        self.store.append_quotes([q for q in quotes if (q['symbol'],q['ts']) not in feature_keys])
 
     async def fast_books(self):
         """Execution depth has its own cadence; feature sampling cannot delay exits."""
@@ -522,7 +587,7 @@ class Collector:
         while True:
             now = int(time.time()*1000)
             updates = []
-            for symbol in self.selected:
+            for symbol in sorted(set(self.selected) | set(self.depth_symbols)):
                 book = self.books.get(symbol)
                 if not book or not book.ready:
                     if symbol in revisions:
@@ -558,28 +623,41 @@ class Collector:
                     revisions.clear()
             await asyncio.sleep(.1)
 
+    async def collect_observations(self, now):
+        rows, quotes, blocked = [], [], {}
+        for s in sorted(set(self.selected) | set(self.depth_symbols)):
+            try:
+                book = self.books[s].metrics(now,self.cfg.depth_bps)
+                # Executable depth remains evidence even when feature creation
+                # fails or this symbol is only observed for a previous signal.
+                quotes.append({'symbol':s,'ts':now,'price':book['mid'],
+                    'meta':{k:book[k] for k in ('bid','ask','bid_depth','ask_depth',
+                                               'spread_bps','updated_ms','sequence')} |
+                            {'candidate':s in self.selected}})
+                if book['spread_bps'] > self.cfg.max_spread_bps:
+                    raise ValueError('Spread above limit')
+                row = self.builder.build(s,book,now,self.event_ms.get(s,0))
+                if s not in self.selected:
+                    continue
+                row['meta']['filters'] = self.rules[s].get('filters',[])
+                row['meta']['entry_allowed'] = True
+                await self.record_event({'e':'feature','s':s,'E':row['ts'],**row},'derived')
+                rows.append(row)
+                await asyncio.to_thread(self.bus.put,'feature:'+s,row,15)
+            except (KeyError,ValueError) as exc:
+                blocked[s] = str(exc)
+            except Exception:
+                blocked[s] = 'Redis unavailable'
+                self.errors += 1
+        return rows,quotes,blocked
+
     async def publish(self):
         while True:
             now = int(time.time()*1000)
-            rows, blocked = [], {}
-            for s in self.selected:
-                try:
-                    book = self.books[s].metrics(now,self.cfg.depth_bps)
-                    if book['spread_bps'] > self.cfg.max_spread_bps:
-                        raise ValueError('Spread above limit')
-                    row = self.builder.build(s,book,now,self.event_ms.get(s,0))
-                    row['meta']['filters'] = self.rules[s].get('filters',[])
-                    await self.record_event({'e':'feature','s':s,'E':row['ts'],**row},'derived')
-                    rows.append(row)
-                    await asyncio.to_thread(self.bus.put,'feature:'+s,row,15)
-                except (KeyError,ValueError) as exc:
-                    blocked[s] = str(exc)
-                except Exception:
-                    blocked[s] = 'Redis unavailable'
-                    self.errors += 1
+            rows, quotes, blocked = await self.collect_observations(now)
             raw = list(self.raw)
             self.raw.clear()
-            await asyncio.to_thread(self.flush,rows,raw)
+            await asyncio.to_thread(self.flush,rows,raw,quotes)
             rank_time = int(time.time()*1000)
             ranking = self.ranker.rank(self.rules,self.tickers,rank_time,self.cfg.min_volume)
             try:
@@ -592,6 +670,12 @@ class Collector:
                                        if getattr(b,'sequence_gap_active',False))
             state = {'status':'collecting','ts':now,'universe_count':len(self.rules),
                      'candidates':list(self.selected),'ready_symbols':[r['symbol'] for r in rows],
+                     'observed_symbols':[q['symbol'] for q in quotes],
+                     'exit_only_symbols':[q['symbol'] for q in quotes if q['symbol'] not in self.selected],
+                     'quote_pipeline':'independent-exit-quotes-v1',
+                     'depth_subscriptions_confirmed':list(self.depth_confirmed),
+                     'depth_commands_pending':self.depth_pending,
+                     'depth_commands_acked':self.depth_commands_acked,
                      'blocked':blocked,'ticker_age_ms':max(0,int(time.time()*1000)-self.received_ms) if self.received_ms else None,
                      # Keep cumulative gaps for auditability, but expose live
                      # recovery state separately for health gates.
@@ -651,7 +735,7 @@ class Collector:
                 held = ()
                 if paper_path.exists():
                     held = tuple(Store(str(paper_path)).get('positions',{}))
-                    selected = tuple(dict.fromkeys(selected+held))
+                self.held = held
                 now_ms = int(time.time()*1000)
                 if selected != self.selected:
                     self.prepare_selected(selected,now_ms)

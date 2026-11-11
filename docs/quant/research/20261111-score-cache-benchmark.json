@@ -1,0 +1,11 @@
+{
+  "kind": "local_inference_benchmark_not_profitability",
+  "rows": 2000,
+  "thresholds": 6,
+  "uncached_seconds": 0.9401586999883875,
+  "cached_seconds": 0.1384243998909369,
+  "speedup": 6.791856787742106,
+  "inferences": 2000,
+  "cache_hits": 10000,
+  "identical_directions": true
+}

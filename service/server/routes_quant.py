@@ -49,6 +49,10 @@ def register_quant_routes(app):
         except Exception:
             history = {'samples':0,'days':0,'error':'Historical store unavailable'}
         now = int(datetime.now(timezone.utc).timestamp()*1000)
+        from quant.opening_readiness import latest_report, paper_readiness
+        paper = paper_settings(cfg)
+        opening = paper_readiness(paper,lab,model,latest_report(lab.directory),state,redis_ok,
+                                  Store(paper.db_path).get('paused',False),now)
         try:
             from quant.event_lake import EventLake
             lake = EventLake(lab.directory, int(lab.event_max_gb * 1024**3), lab.retention_days * 24)
@@ -66,7 +70,7 @@ def register_quant_routes(app):
             event_replay.pop('fills',None)
         except (OSError,ValueError):
             event_replay = None
-        return {'enabled':lab.enabled,'redis_connected':redis_ok,'collector':state,
+        return {'enabled':lab.enabled,'redis_connected':redis_ok,'collector':state,'opening':opening,
                 'event_history':event_history,'ranking':ranking,'event_replay':event_replay,
                 'stale':now-state.get('ts',0)>20000,'model':model,'history':history,
                 'requirements':{'min_samples':lab.min_samples,'min_days':lab.min_days,

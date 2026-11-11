@@ -78,6 +78,7 @@ class LabExecution:
         row = self.bus.get('feature:'+symbol)
         if (not row or not 0 <= time.time()*1000-row['ts'] <= 10000
                 or not row['meta'].get('quality') or row['meta'].get('schema') != SCHEMA
+                or not row['meta'].get('entry_allowed',True)
                 or row.get('symbol') != symbol or len(row.get('vector',[])) != len(FEATURES)
                 or not all(math.isfinite(v) for v in row['vector'])
                 or not math.isfinite(row['price']) or row['price'] <= 0):
@@ -100,6 +101,9 @@ class LabExecution:
             return False
         try:
             state = self.bus.get('state') or {}
+            candidates = self.bus.get('candidates') or {}
+            if symbol not in candidates.get('symbols',[]):
+                return False
             if not 0 <= time.time()*1000-state.get('ts',0) <= 15000 or symbol not in state.get('ready_symbols',[]):
                 return False
             self.row(symbol)

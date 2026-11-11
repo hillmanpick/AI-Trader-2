@@ -108,6 +108,46 @@ def test_interleaved_symbols_keep_independent_receive_order_and_label_quality():
     assert labeler.drain()[0]['valid']
 
 
+def test_expired_observation_is_not_a_stale_book_but_cannot_hide_held_or_sequence_gaps(tmp_path):
+    from quant.book_replay import HistoricalBookReplay
+    from quant.execution_state import SimulatedBroker
+    events=[ev('depthSnapshot',1000,lastUpdateId=100,bids=[['99','5']],asks=[['101','2']]),
+        ev('depthUpdate',1001,U=100,u=101,pu=99,b=[],a=[]),
+        ev('depthStatus',1100,symbol='',symbols=['BTCUSDT'],status='retired',
+           reason='candidate_observation_expired'),ev('heartbeat',5000,symbol='')]
+    replay=HistoricalBookReplay(SimulatedBroker(OrderJournal(tmp_path/'quotes.db')))
+    assert replay.run(events)['valid']
+    # A real sequence discontinuity before retirement remains invalid.
+    bad=list(events)
+    bad.insert(2,ev('depthUpdate',1050,U=105,u=106,pu=104,b=[],a=[]))
+    replay=HistoricalBookReplay(SimulatedBroker(OrderJournal(tmp_path/'gap.db')))
+    assert 'sequence_gap' in replay.run(bad)['invalid_reasons']
+    # Model replay must keep the stronger held-position reset rejection.
+    from quant.settings import Settings
+    from quant.execution_policy import policy_for_settings
+    r=ModelEventReplay(OrderJournal(tmp_path/'held.db'),model(),
+        policy_for_settings(Settings(),300),0,10000*1000000)
+    r.positions['BTCUSDT']={'amount':1.,'entry':100.,'mark':100.,'mae':0.,'mfe':0.,
+        'opened_ns':1000*1000000,'initial_margin':50.,'plan':{'stop_pct':.01,'take_pct':.02,'atr':1.,'regime':'test'},
+        'stop_pct':.01,'stop_price':99.}
+    r.consume(events[2])
+    assert 'depth_feed_reset_while_holding' in r.invalid
+    safe=ModelEventReplay(OrderJournal(tmp_path/'safe.db'),model(),
+        policy_for_settings(Settings(),300),0,1000000*1000000)
+    safe.consume(ev('candidates',1000,symbol='',symbols=['BTCUSDT']))
+    safe.consume(ev('candidates',2000,symbol='',symbols=[]))
+    safe.consume(ev('depthSnapshot',2100,lastUpdateId=100,bids=[['99','5']],asks=[['101','2']]))
+    safe.consume(ev('depthStatus',347000,symbol='',symbols=['BTCUSDT'],status='retired',
+        reason='candidate_observation_expired'))
+    assert not safe.invalid
+    safe.consume(ev('depthStatus',347001,symbol='',symbols=['UNRELATEDUSDT'],status='retired',
+        reason='candidate_observation_expired'))
+    assert not safe.invalid
+    safe.consume(ev('depthStatus',347002,symbol='',symbols=['BTCUSDT'],status='retired',
+        reason='candidate_observation_expired'))
+    assert not safe.invalid
+
+
 def model():
     result = {'schema':SCHEMA,'features':list(FEATURES),'classes':[-1,0,1],
         'mean':[0.]*len(FEATURES),'scale':[1.]*len(FEATURES),

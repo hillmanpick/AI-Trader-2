@@ -459,6 +459,129 @@ def test_candidate_rotation_keeps_depth_subscription_during_label_grace(tmp_path
     assert set(fourth) == {'BTCUSDT', 'SOLUSDT'}
 
 
+def test_quote_observation_survives_feature_warmup_and_candidate_rotation(tmp_path):
+    import asyncio,time
+    from unittest.mock import MagicMock
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector=Collector(LabConfig(directory=str(tmp_path)))
+        collector.bus=MagicMock()
+        now=int(time.time()*1000)
+        collector.selected=('BTCUSDT',)
+        collector.depth_symbols=('BTCUSDT','ETHUSDT')
+        for symbol in collector.depth_symbols:collector.books[symbol]=book(now)
+        rows,quotes,blocked=await collector.collect_observations(now)
+        assert not rows and len(quotes)==2 and len(blocked)==2
+        collector.flush(rows,[],quotes)
+        market=list(collector.store.market_rows(now,now+1))
+        assert len(market)==2 and all(not r['meta']['entry_allowed'] for r in market)
+        assert collector.event_queue.empty()
+        assert not collector.bus.put.called
+        collector.trade_archive_until['ETHUSDT']=now+345000
+        collector.builder.last_trade['ETHUSDT']=100
+        collector.builder.history['ETHUSDT'].append((now,100.))
+        collector.prepare_selected(('BTCUSDT','ETHUSDT'),now+1)
+        assert list(collector.builder.history['ETHUSDT'])==[(now,100.)]
+        collector.selected=('BTCUSDT',)
+        await collector.accept_trade({'e':'trade','s':'ETHUSDT','E':now,'T':now,
+            't':101,'p':'100','q':'1','m':False},now*1000000)
+        assert collector.builder.last_trade['ETHUSDT']==101
+        collector.store.append([{'symbol':'ETHUSDT','ts':now,'price':100.,
+            'vector':[0.]*len(FEATURES),'meta':{'quality':True,'schema':SCHEMA}}])
+        restored=Collector(LabConfig(directory=str(tmp_path)))
+        assert restored.depth_grace_until['ETHUSDT']>=now+345000
+        assert not restored.books
+        # The maintenance cadence can retain a depth feed past its minimum
+        # grace. Trade evidence must cover that same actual observation period.
+        collector.trade_archive_until['ETHUSDT']=now-1
+        assert collector.archives_trade('ETHUSDT',now)
+        collector.prepare_selected(('BTCUSDT','ETHUSDT'),now+2)
+        assert list(collector.builder.history['ETHUSDT'])==[(now,100.)]
+    asyncio.run(check())
+
+
+@pytest.mark.parametrize('ack_error',[False,True])
+def test_depth_rotation_waits_for_ack_and_reconnects_on_rejection(tmp_path,monkeypatch,ack_error):
+    import asyncio
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock,MagicMock
+    import aiohttp
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector=Collector(LabConfig(directory=str(tmp_path)))
+        collector.depth_symbols=('BTCUSDT',)
+        collector.depth_update_event=asyncio.Event()
+        collector.reset_depth_feed=AsyncMock()
+        collector.drop_depth_feed=AsyncMock()
+        sent=[]
+        count=0
+        class Socket:
+            async def send_json(self,payload):sent.append(payload)
+            async def receive(self):
+                nonlocal count
+                count+=1
+                if count==1:
+                    collector.request_depth_subscriptions(('ETHUSDT',))
+                    return SimpleNamespace(type=aiohttp.WSMsgType.TEXT,
+                        data=json.dumps({'data':{'e':'bookTicker','s':'BTCUSDT'}}))
+                if count in (2,3):
+                    assert collector.depth_confirmed==(('BTCUSDT',) if count==2 else ('BTCUSDT','ETHUSDT'))
+                    assert not collector.drop_depth_feed.called
+                    payload=({'id':sent[count-2]['id'],'code':2,'msg':'Rejected'} if ack_error
+                        else {'id':sent[count-2]['id'],'result':None})
+                    return SimpleNamespace(type=aiohttp.WSMsgType.TEXT,data=json.dumps(payload))
+                assert collector.depth_confirmed==('ETHUSDT',)
+                collector.drop_depth_feed.assert_awaited_once_with({'BTCUSDT'})
+                raise asyncio.CancelledError
+        class Context:
+            async def __aenter__(self):return Socket()
+            async def __aexit__(self,*args):return False
+        collector.session=MagicMock()
+        collector.session.ws_connect.return_value=Context()
+        async def stop(delay):raise asyncio.CancelledError
+        monkeypatch.setattr('quant.lab_worker.asyncio.sleep',stop)
+        with pytest.raises(asyncio.CancelledError):await collector.public_stream(('BTCUSDT',))
+        assert [p['method'] for p in sent]==['SUBSCRIBE','UNSUBSCRIBE']
+        assert collector.reconnects==int(ack_error)
+        assert collector.depth_commands_acked==(0 if ack_error else 2)
+        assert collector.reset_depth_feed.call_args.args[1]=='disconnected'
+    asyncio.run(check())
+
+
+def test_text_silent_depth_socket_has_a_real_watchdog(tmp_path,monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock,MagicMock
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector=Collector(LabConfig(directory=str(tmp_path)))
+        collector.depth_symbols=('BTCUSDT',)
+        collector.reset_depth_feed=AsyncMock()
+        clock=[0.]
+        # Patch the module's clock, not asyncio's scheduling clock.
+        from types import SimpleNamespace
+        import time
+        monkeypatch.setattr('quant.lab_worker.time',SimpleNamespace(
+            monotonic=lambda:clock[0],time_ns=time.time_ns,time=time.time))
+        class Socket:
+            async def receive(self):
+                clock[0]+=16
+                raise asyncio.TimeoutError
+        class Context:
+            async def __aenter__(self):return Socket()
+            async def __aexit__(self,*args):return False
+        collector.session=MagicMock()
+        collector.session.ws_connect.return_value=Context()
+        async def stop(delay):raise asyncio.CancelledError
+        monkeypatch.setattr('quant.lab_worker.asyncio.sleep',stop)
+        with pytest.raises(asyncio.CancelledError):await collector.public_stream(('BTCUSDT',))
+        assert collector.reconnects==1
+        assert collector.reset_depth_feed.call_args.args==({'BTCUSDT'},'disconnected')
+    asyncio.run(check())
+
+
 def test_parquet_trade_archive_tracks_candidates_and_label_grace(tmp_path):
     import asyncio
     import time

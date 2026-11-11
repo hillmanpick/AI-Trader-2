@@ -42,6 +42,10 @@ class LabStore:
                     symbol TEXT, ts INTEGER, price REAL, vector TEXT, meta TEXT,
                     PRIMARY KEY(symbol,ts));
                 CREATE INDEX IF NOT EXISTS sample_time ON samples(ts);
+                CREATE TABLE IF NOT EXISTS execution_quotes (
+                    symbol TEXT, ts INTEGER, price REAL, meta TEXT,
+                    PRIMARY KEY(symbol,ts));
+                CREATE INDEX IF NOT EXISTS execution_quote_time ON execution_quotes(ts);
                 CREATE TABLE IF NOT EXISTS reports (
                     id INTEGER PRIMARY KEY, ts INTEGER, report TEXT);
                 CREATE TABLE IF NOT EXISTS event_labels (
@@ -65,6 +69,13 @@ class LabStore:
             c.executemany('INSERT OR IGNORE INTO samples VALUES (?,?,?,?,?)',
                           [(r['symbol'], r['ts'], r['price'], json.dumps(r['vector'], allow_nan=False),
                             json.dumps(r['meta'], allow_nan=False)) for r in rows])
+
+    def append_quotes(self, rows):
+        """Exit observations have no vector, signal, or training label."""
+        with self.connect() as c:
+            c.executemany('INSERT OR IGNORE INTO execution_quotes VALUES (?,?,?,?)',
+                [(r['symbol'],r['ts'],r['price'],json.dumps(r['meta'] | {
+                    'entry_allowed':False,'quote_quality':True},allow_nan=False)) for r in rows])
 
     def rows(self, limit=500000, stride_ms=30000):
         with self.connect() as c:
@@ -120,6 +131,7 @@ class LabStore:
         from .lab_features import SCHEMA
         with self.connect() as c:
             n, start, end = c.execute('SELECT COUNT(*),MIN(ts),MAX(ts) FROM samples').fetchone()
+            quotes = c.execute('SELECT COUNT(*),MIN(ts),MAX(ts) FROM execution_quotes').fetchone()
             report = c.execute('SELECT report FROM reports ORDER BY id DESC LIMIT 1').fetchone()
             labels = c.execute('SELECT COUNT(*),COALESCE(SUM(valid),0),MIN(ts),MAX(ts) FROM event_labels').fetchone()
             # Aggregate inside SQLite, never materialize millions of JSON rows.
@@ -130,6 +142,7 @@ class LabStore:
                   AND CASE WHEN json_valid(l.body) THEN json_extract(l.body,'$.schema') END=?''',
                 (SCHEMA, LABEL_SCHEMA)).fetchone()
         return {'samples': n, 'start_ms': start, 'end_ms': end,
+                'execution_quotes':{'count':quotes[0],'start_ms':quotes[1],'end_ms':quotes[2]},
                 'days': (end-start)/86400000 if start is not None and end is not None else 0,
                 'latest_report': json.loads(report[0]) if report else None,
                 'event_labels':{'total':labels[0],'valid':labels[1],
@@ -173,20 +186,31 @@ class LabStore:
         paths are visible to the replay. This remains sampled-quote research.
         """
         with self.connect() as c:
-            cursor = c.execute('SELECT symbol,ts,price,vector,meta FROM samples '
-                               'WHERE ts>=? AND ts<? ORDER BY ts,symbol',(start_ms,end_ms))
+            # A simultaneous feature wins; otherwise a quote remains visible
+            # even during warmup or after leaving the candidate pool.
+            cursor = c.execute('''SELECT symbol,ts,price,vector,meta FROM samples
+                WHERE ts>=? AND ts<?
+                UNION ALL
+                SELECT q.symbol,q.ts,q.price,NULL,q.meta FROM execution_quotes q
+                WHERE q.ts>=? AND q.ts<? AND NOT EXISTS (
+                    SELECT 1 FROM samples s WHERE s.symbol=q.symbol AND s.ts=q.ts)
+                ORDER BY ts,symbol''',(start_ms,end_ms,start_ms,end_ms))
             last = {}
             for symbol,ts,price,vector,meta in cursor:
                 if ts//stride_ms == last.get(symbol):
                     continue
-                last[symbol] = ts//stride_ms
                 meta = json.loads(meta)
                 from .lab_features import SCHEMA
-                if meta.get('schema') != SCHEMA or not meta.get('quality'):
+                if vector is not None and (meta.get('schema') != SCHEMA or not meta.get('quality')):
                     continue
+                if vector is None and not meta.get('quote_quality'):
+                    continue
+                last[symbol] = ts//stride_ms
                 meta = {k:meta[k] for k in ('quality','schema','bid','ask','bid_depth','ask_depth',
-                            'spread_bps','atr_proxy','funding_rate','filters') if k in meta}
-                yield {'symbol':symbol,'ts':ts,'price':price,'vector':json.loads(vector),'meta':meta}
+                            'spread_bps','atr_proxy','funding_rate','filters','entry_allowed',
+                            'quote_quality','candidate') if k in meta}
+                yield {'symbol':symbol,'ts':ts,'price':price,
+                       'vector':json.loads(vector) if vector is not None else [],'meta':meta}
 
     def prune(self, days):
         with self.connect() as c:
@@ -194,6 +218,8 @@ class LabStore:
             c.execute('DELETE FROM samples WHERE rowid IN (SELECT rowid FROM samples WHERE ts<? LIMIT 50000)',
                       (int((time.time()-days*86400)*1000),))
             c.execute('DELETE FROM event_labels WHERE rowid IN (SELECT rowid FROM event_labels WHERE ts<? LIMIT 50000)',
+                      (int((time.time()-days*86400)*1000),))
+            c.execute('DELETE FROM execution_quotes WHERE rowid IN (SELECT rowid FROM execution_quotes WHERE ts<? LIMIT 50000)',
                       (int((time.time()-days*86400)*1000),))
 
 

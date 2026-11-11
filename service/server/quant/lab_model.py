@@ -53,7 +53,9 @@ def model_status(cfg, now=None):
             return {'ready':False,'reason':'模型特征版本不匹配'}, None
         if not model.get('approved'):
             if not getattr(cfg, 'exploration_mode', False):
-                return {'ready':False,'reason':'样本外检验未通过','version':model.get('version')},None
+                return {'ready':False,'approved':False,'reason':'样本外检验未通过',
+                        'validation_reason':model.get('execution_validation',{}).get('reason'),
+                        'version':model.get('version')},None
             # Exploration is deliberately paper-only and visibly unapproved.
             # Do not bypass the schema, coefficient, or model-age checks.
             probabilities(model,[0.]*len(FEATURES))
@@ -88,7 +90,7 @@ def model_status(cfg, now=None):
         probabilities(model,[0.]*len(FEATURES))
         if not 0 <= now-model['trained_ms'] <= cfg.max_model_age_hours*3600000:
             return {'ready':False,'reason':'模型过期，需要重新验证','version':model.get('version')},None
-        return {'ready':True,'reason':'已通过历史样本外门槛，仅允许独立模拟',
+        return {'ready':True,'approved':True,'reason':'已通过历史样本外门槛，仅允许独立模拟',
                 'version':model['version'],'trained_ms':model['trained_ms'],
                 'threshold':model['threshold'],'test':model['test']},model
     except (OSError,ValueError,KeyError,TypeError):

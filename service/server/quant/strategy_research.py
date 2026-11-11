@@ -96,25 +96,33 @@ def load_snapshot(database,start_ms,end_ms,stride_ms=30000,max_rows=180000):
     digest=hashlib.sha256()
     try:
         connection.execute('PRAGMA query_only=ON')
-        for symbol,ts,price,vector,meta,label,valid,label_end,body in connection.execute(
-            'SELECT s.symbol,s.ts,s.price,s.vector,s.meta,l.label,l.valid,l.label_end,l.body '
+        query=('SELECT s.symbol,s.ts,s.price,s.vector,s.meta,l.label,l.valid,l.label_end,l.body '
             'FROM samples s LEFT JOIN event_labels l ON s.symbol=l.symbol AND s.ts=l.ts '
-            'WHERE s.ts>=? AND s.ts<? ORDER BY s.ts,s.symbol',(start_ms,end_ms)):
+            'WHERE s.ts>=? AND s.ts<?')
+        params=(start_ms,end_ms)
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE name='execution_quotes'").fetchone():
+            query+=(' UNION ALL SELECT q.symbol,q.ts,q.price,NULL,q.meta,NULL,NULL,NULL,NULL '
+                'FROM execution_quotes q WHERE q.ts>=? AND q.ts<? AND NOT EXISTS '
+                '(SELECT 1 FROM samples s WHERE s.symbol=q.symbol AND s.ts=q.ts)')
+            params+=(start_ms,end_ms)
+        query+=' ORDER BY ts,symbol'
+        for symbol,ts,price,vector,meta,label,valid,label_end,body in connection.execute(query,params):
             if ts//stride_ms==last.get(symbol):continue
-            last[symbol]=ts//stride_ms
             meta=json.loads(meta)
-            if not meta.get('quality') or meta.get('schema')!=SCHEMA:continue
+            if vector is not None and (not meta.get('quality') or meta.get('schema')!=SCHEMA):continue
+            if vector is None and not meta.get('quote_quality'):continue
+            last[symbol]=ts//stride_ms
             # Preserve causal exchange rules when available; no future-label
             # predicate may remove quotes from the execution path.
             meta={k:meta[k] for k in ('quality','schema','bid','ask','bid_depth','ask_depth',
-                'spread_bps','atr_proxy','funding_rate','filters') if k in meta}
+                'spread_bps','atr_proxy','funding_rate','filters','entry_allowed','quote_quality','candidate') if k in meta}
             if 'filters' in meta:
                 key=(symbol,json.dumps(meta['filters'],sort_keys=True))
                 meta['filters']=filter_cache.setdefault(key,meta['filters'])
-            row={'symbol':symbol,'ts':ts,'price':price,'vector':json.loads(vector),'meta':meta}
+            row={'symbol':symbol,'ts':ts,'price':price,'vector':json.loads(vector) if vector else [],'meta':meta}
             digest.update(json.dumps(row,sort_keys=True,separators=(',',':')).encode())
             rows.append(row)
-            if valid and body and json.loads(body).get('schema')==LABEL_SCHEMA:
+            if vector and meta.get('entry_allowed',True) and valid and body and json.loads(body).get('schema')==LABEL_SCHEMA:
                 training.append(row|{'label':label,'label_end':label_end})
                 digest.update(json.dumps({'symbol':symbol,'ts':ts,'label':label,'label_end':label_end},
                                          sort_keys=True).encode())

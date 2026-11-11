@@ -1,0 +1,64 @@
+{
+  "valid": false,
+  "invalid_reasons": [
+    "sequence_gap"
+  ],
+  "first_received_ns": 1794389100085382125,
+  "last_received_ns": 1794389899965315689,
+  "gap_details": [
+    {
+      "symbol": "PONSUSDT",
+      "kind": "trade",
+      "received_ns": 1794389370767623164,
+      "previous_id": 45338880,
+      "ids": {
+        "t": 45339053
+      }
+    }
+  ],
+  "gap_details_truncated": false,
+  "events": 6885,
+  "reconstructed_depth_updates": 4401,
+  "sequence_gaps": 1,
+  "local_processing": {
+    "clock": "perf_counter_ns",
+    "sample_count": 6885,
+    "p50_ms": 0.135584,
+    "p95_ms": 0.9241207999999999,
+    "p99_ms": 4.91630939999999
+  },
+  "observed_feed_latency": {
+    "clock": "receive wall clock minus venue event time; includes clock offset",
+    "p50_ms": 63.856285,
+    "p95_ms": 846.2967377999788
+  },
+  "limitations": [
+    "Displayed depth does not reveal hidden liquidity or exact queue priority",
+    "Simulated acknowledgement/fill times are not measured exchange order latencies"
+  ],
+  "schema": "portfolio-individual-events-v4",
+  "net_pnl": -0.05107152191339992,
+  "trades": 1,
+  "win_rate": 0.0,
+  "profit_factor": 0.0,
+  "max_drawdown": 0.05107152191339992,
+  "fees": 0.010346555175000001,
+  "funding": 1.703674039394555e-05,
+  "signals": 1,
+  "rejected": 0,
+  "open_positions": 0,
+  "start_ns": 1794389400000000000,
+  "end_ns": 1794389900000000000,
+  "funding_assumption": "absolute 10bps/8h prorated, no funding income",
+  "stress": false,
+  "model_version": "9c0fdba920266887450420c6",
+  "policy_hash": "3882687b694fce05ec2bd054434b8c1861674e6ba9dae5e835e74fcc8c37be28",
+  "requested_symbols": [
+    "PONSUSDT"
+  ],
+  "manifest_hash": "368837834fdd9b86c4c38196a0cf1e23995bf8742f7be10b17e9f47849b9df01",
+  "segments": 318,
+  "purpose": "bounded_margin_real_events_execution_diagnostic_not_promotion",
+  "promotion_allowed": false,
+  "window_seconds": 500
+}

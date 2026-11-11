@@ -34,6 +34,7 @@ def paper_settings(base):
                   max_notional=(float(os.getenv('QUANT_PAPER_MAX_TOTAL_NOTIONAL_USDT', str(max_margin*leverage)))
                                 if dynamic else max_margin*leverage if max_margin else float(os.getenv('QUANT_PAPER_MAX_TOTAL_NOTIONAL_USDT', '6000'))),
                   paper_margin=margin, paper_max_margin=max_margin,
+                  paper_margin_is_ceiling=os.getenv('QUANT_PAPER_MARGIN_IS_CEILING','false').lower()=='true',
                   paper_maintenance_rate=float(os.getenv('QUANT_PAPER_MAINTENANCE_RATE', '.005')),
                   paper_dynamic_exits=os.getenv('QUANT_PAPER_DYNAMIC_EXITS','false').lower() == 'true',
                   paper_dynamic_leverage=dynamic,

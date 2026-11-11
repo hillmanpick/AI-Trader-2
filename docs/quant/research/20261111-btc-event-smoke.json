@@ -1,0 +1,52 @@
+{
+  "valid": true,
+  "invalid_reasons": [],
+  "first_received_ns": 1794389100059535222,
+  "last_received_ns": 1794389899982599155,
+  "gap_details": [],
+  "gap_details_truncated": false,
+  "events": 27541,
+  "reconstructed_depth_updates": 7562,
+  "sequence_gaps": 0,
+  "local_processing": {
+    "clock": "perf_counter_ns",
+    "sample_count": 27541,
+    "p50_ms": 0.013617,
+    "p95_ms": 1.552182,
+    "p99_ms": 6.4972251999999795
+  },
+  "observed_feed_latency": {
+    "clock": "receive wall clock minus venue event time; includes clock offset",
+    "p50_ms": 88.542979,
+    "p95_ms": 341.12962
+  },
+  "limitations": [
+    "Displayed depth does not reveal hidden liquidity or exact queue priority",
+    "Simulated acknowledgement/fill times are not measured exchange order latencies"
+  ],
+  "schema": "portfolio-individual-events-v4",
+  "net_pnl": 0.0,
+  "trades": 0,
+  "win_rate": 0,
+  "profit_factor": null,
+  "max_drawdown": 0.0,
+  "fees": 0.0,
+  "funding": 0.0,
+  "signals": 0,
+  "rejected": 0,
+  "open_positions": 0,
+  "start_ns": 1794389400000000000,
+  "end_ns": 1794389900000000000,
+  "funding_assumption": "absolute 10bps/8h prorated, no funding income",
+  "stress": false,
+  "model_version": "690911cd796bfb993b68b2f5",
+  "policy_hash": "79122cd68adcde68e999d56bcd168c64b8f48c15dc2fbe1baa7c23e4fbca1e19",
+  "requested_symbols": [
+    "BTCUSDT"
+  ],
+  "manifest_hash": "368837834fdd9b86c4c38196a0cf1e23995bf8742f7be10b17e9f47849b9df01",
+  "segments": 318,
+  "purpose": "post_repair_BTC_pipeline_diagnostic_not_promotion",
+  "promotion_allowed": false,
+  "window_seconds": 500
+}

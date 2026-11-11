@@ -37,6 +37,15 @@ def test_thin_book_replay_and_shared_entry_plan_use_same_margin_ceiling():
     assert blocked['trades']==0
     assert blocked['rejection_reasons']['risk_or_liquidity']>0
     assert blocked['rejected']==sum(blocked['rejection_reasons'].values())
+    strict=p|{'paper_exploration_mode':False,'paper_margin_is_ceiling':True}
+    bounded=microstructure_plan(row,row['meta'],strict,{},50)
+    assert bounded['margin']==25 and bounded['notional']==50
+    assert bounded['planned_risk_usdt']<=25*cfg.paper_risk_fraction
+    allowed=replay([quote(i*5000) for i in range(12)],[1]*12,policy=strict,horizon_ms=15000)
+    assert allowed['trades']>0 and allowed['net_pnl']<0
+    # Smaller sizing never means a rejected model can skip the approval gate.
+    from quant.execution_policy import fingerprint
+    assert fingerprint(strict)!=fingerprint(p)
 
 
 def test_sampled_quote_gap_invalidates_research_result():
@@ -51,6 +60,86 @@ def test_execution_quotes_do_not_depend_on_future_label_availability(tmp_path):
     # No event labels exist. Execution must still observe all causal quotes.
     assert db.labeled_rows()==[]
     assert [r['ts'] for r in db.market_rows(0,30000,stride_ms=5000)]==list(range(0,30000,5000))
+
+
+def test_exit_observations_fill_feature_gaps_without_entering_training(tmp_path):
+    db=LabStore(tmp_path)
+    db.append([quote(0,1000000),quote(5000,1000000)])
+    db.append_quotes([quote(t,1000000) for t in range(0,65000,5000)])
+    rows=list(db.market_rows(0,65000,stride_ms=5000))
+    assert len(rows)==13 and rows[0]['vector']
+    assert all(not r['vector'] and not r['meta']['entry_allowed'] for r in rows[2:])
+    assert db.labeled_rows()==[]
+    observed=[]
+    result=replay(rows,(),signal_fn=lambda r:observed.append(r['ts']) or 1,horizon_ms=30000)
+    assert observed==[0,5000] and result['valid'] and result['trades']==1
+    assert result['fills'][0]['reason']=='timeout'
+    from quant.strategy_research import load_snapshot
+    exported,labels,_=load_snapshot(db.path,0,65000,stride_ms=5000)
+    assert exported==rows and not labels
+
+
+def test_exit_only_quote_cancels_pending_entry_and_never_creates_one():
+    rows=[quote(0),quote(5000),quote(10000)]
+    for r in rows[1:]:r['meta']['entry_allowed']=False
+    result=replay(rows,[1,1,1])
+    assert result['trades']==0
+    assert result['rejection_reasons']=={'entry_observation_only':1}
+
+
+def test_feature_warmup_quote_can_fill_prior_signal_only_while_still_a_candidate():
+    signal=quote(0,1000000)
+    observations=[quote(t,1000000) for t in range(5000,65000,5000)]
+    for row in observations:
+        row['vector']=[]
+        row['meta'].update(entry_allowed=False,candidate=True)
+        row['meta'].pop('atr_proxy')
+    observed=[]
+    result=replay([signal]+observations,(),horizon_ms=30000,
+        signal_fn=lambda row:observed.append(row['ts']) or 1)
+    assert observed==[0] and result['trades']==1 and result['valid']
+    assert result['fills'][0]['reason']=='timeout'
+
+
+def test_readiness_distinguishes_administrative_pause_data_and_failed_strategy(tmp_path):
+    from dataclasses import replace
+    from quant.lab_config import LabConfig
+    from quant.opening_readiness import paper_readiness
+    paper=Settings(enabled=True,strategy='lab_model',paper_lab_required=True)
+    lab=LabConfig(enabled=True,directory=str(tmp_path))
+    model={'ready':False,'reason':'样本外检验未通过','version':'test'}
+    report={'status':'rejected','folds':[{'test':{'valid':False,'net_pnl':-15.}}],
+        'execution_validation':{'reason':'sampled_research_gate_failed'}}
+    live={'ts':100000,'ready_symbols':['BTCUSDT']}
+    result=paper_readiness(paper,lab,model,report,live,True,False,100001)
+    assert result['armed'] and result['automatic_after_validation'] and not result['entry_ready']
+    assert [b['code'] for b in result['blockers']]==['model_unvalidated']
+    assert result['sampled_test_pnl']==[-15.] and result['sampled_tests_with_gaps']==1
+    assert paper_readiness(paper,lab,{'ready':True},{},live,True,False,100001)['entry_ready']
+    stopped=paper_readiness(replace(paper,enabled=False),lab,model,report,{},False,True,100001)
+    codes={b['code'] for b in stopped['blockers']}
+    assert {'paper_disabled','operator_paused','collector_stale','redis_unavailable'}<=codes
+
+
+def test_bounded_training_score_cache_matches_uncached_decisions_for_all_thresholds():
+    from quant.lab_train import SampledModelSignals
+    from quant.lab_model import decide
+    model={'schema':SCHEMA,'features':list(FEATURES),'classes':[-1,0,1],
+        'mean':[0.]*len(FEATURES),'scale':[1.]*len(FEATURES),
+        'coef':[[.1]*len(FEATURES),[0.]*len(FEATURES),[-.1]*len(FEATURES)],
+        'intercept':[.4,0.,-.2],'version':'test'}
+    scorer=SampledModelSignals(model,max_rows=10)
+    rows=[quote(i*5000) for i in range(10)]
+    for i,r in enumerate(rows):r['vector'][0]=i-5
+    for threshold in (.45,.5,.55,.6,.65,.7):
+        for r in rows:
+            action=decide(model|{'threshold':threshold},r)['action']
+            assert scorer.direction(r,threshold)=={'long':1,'short':-1,'hold':0}[action]
+    assert scorer.inferences==10 and scorer.hits==50
+    scorer.direction(quote(100000),.5)
+    assert len(scorer.cache)==10
+    other=SampledModelSignals(model|{'intercept':[-10,-10,10]})
+    assert other.direction(rows[0],.7)==1
 
 
 def test_reflection_counts_one_position_across_partial_entries_and_closes(tmp_path):

@@ -18,7 +18,7 @@ from .lab_model import decide
 from .market_ranker import MarketRanker
 from .strategies import update_dynamic_exit
 
-REPLAY_SCHEMA = 'portfolio-individual-events-v3'
+REPLAY_SCHEMA = 'portfolio-individual-events-v4'
 KINDS = {'depthSnapshot','depthUpdate','trade','feature','feedStatus','depthStatus','candidates'}
 
 
@@ -34,6 +34,7 @@ class ModelEventReplay(HistoricalBookReplay):
         self.stress = stress
         self.measured_gaps = 0
         self.active_candidates = None
+        self.candidate_removed_ns = {}
         broker = SimulatedBroker(journal,ack_ms=500 if stress else 20,
             fee_rate=policy['fee_rate'],participation=policy['paper_depth_participation']*(.5 if stress else 1),
             slippage=policy['paper_slippage']*(2 if stress else 1),on_fill=self.apply_fill)
@@ -98,7 +99,8 @@ class ModelEventReplay(HistoricalBookReplay):
             return
         if self.active_candidates is not None and symbol not in self.active_candidates:
             return
-        if not row['meta'].get('quality') or not 0 <= now//1000000-row['ts'] <= 10000:
+        if (not row['meta'].get('quality') or not row['meta'].get('entry_allowed',True)
+                or not 0 <= now//1000000-row['ts'] <= 10000):
             self.rejected += 1
             return
         decision = decide(self.model,row)
@@ -160,10 +162,29 @@ class ModelEventReplay(HistoricalBookReplay):
                     self.invalid.append('trade_feed_disconnected_while_holding')
         if kind=='depthStatus':
             for s in payload.get('symbols', [symbol] if symbol else []):
+                # Global control records include symbols outside an explicitly
+                # scoped replay. They must not invalidate unrelated evidence.
+                if s not in self.books and s not in self.positions and s not in self.pending:
+                    continue
+                if payload.get('status')=='retired':
+                    removed=self.candidate_removed_ns.get(s)
+                    grace=(self.policy['horizon_seconds']+45)*10**9
+                    if (removed is None or now-removed<grace
+                            or s in (self.active_candidates or set()) or s in self.pending):
+                        self.invalid.append('unproven_or_premature_observation_retirement')
                 if s in self.positions:
                     self.invalid.append('depth_feed_reset_while_holding')
         if kind=='candidates':
-            self.active_candidates = set(payload['symbols'])
+            updated = set(payload['symbols'])
+            for s in (self.active_candidates or set())-updated:
+                self.candidate_removed_ns[s]=now
+            for s in updated:
+                self.candidate_removed_ns.pop(s,None)
+            for s in set(self.books)-updated:
+                self.candidate_removed_ns.setdefault(s,now)
+            self.active_candidates = updated
+        if kind=='depthSnapshot' and self.active_candidates is not None and symbol not in self.active_candidates:
+            self.candidate_removed_ns.setdefault(symbol,now)
         if kind=='trade' and event['source']=='websocket' and float(payload['p'])>0 and float(payload['q'])>0:
             self.ranker.trade(payload)
             if symbol in self.positions:

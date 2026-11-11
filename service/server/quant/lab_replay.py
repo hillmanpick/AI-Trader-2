@@ -43,7 +43,8 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
         trades.append({'symbol':s,'net':net,'reason':reason,'mae':p['mae'],'mfe':p['mfe'],
                        'leverage':p['leverage'],'margin':p['margin'],'at':row['ts']})
 
-    pairs = ((r,signal_fn(r)) for r in rows) if signal_fn else zip(rows,predictions)
+    pairs = ((r,signal_fn(r) if r['meta'].get('entry_allowed',True) else 0)
+             for r in rows) if signal_fn else zip(rows,predictions)
     for row,pred in pairs:
         s,t,price,meta = row['symbol'],row['ts'],row['price'],row['meta']
         if s in positions and s in latest and t-latest[s]['ts']>45000:
@@ -60,6 +61,13 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
                 close(s,row,exit_reason or 'timeout')
                 pending.pop(s,None)
         order = pending.get(s)
+        if not meta.get('entry_allowed',True) and not meta.get('candidate',False):
+            # Observation is sufficient for closing, never for a new entry.
+            # Cancel a candidate's old signal when entry eligibility ends.
+            if pending.pop(s,None):
+                rejected += 1
+                reasons['entry_observation_only'] += 1
+            order = None
         if order and t >= order['due']:
             pending.pop(s,None)
             # A long sample gap cannot stand in for a timely fill.
@@ -81,7 +89,8 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
             depth = meta['ask_depth' if side > 0 else 'bid_depth']*depth_participation
             exposure = sum(abs(p['amount'])*p['mark'] for p in positions.values())
             try:
-                plan = microstructure_plan(row,meta,cfg,positions,min(depth,cfg['max_notional']-exposure))
+                signal_row = row if meta.get('entry_allowed',True) else order['signal_row']
+                plan = microstructure_plan(signal_row,meta,cfg,positions,min(depth,cfg['max_notional']-exposure))
             except (ValueError,KeyError) as exc:
                 rejected += 1
                 reasons['cost' if 'cost' in str(exc).lower() else 'risk_or_liquidity'] += 1
@@ -101,7 +110,7 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
                 partial += 1
             px = fill(row,side)
             quantity = actual/px
-            filters = {f['filterType']:f for f in meta.get('filters',[])}
+            filters = {f['filterType']:f for f in signal_row['meta'].get('filters',[])}
             lot = filters.get('MARKET_LOT_SIZE',filters.get('LOT_SIZE',{}))
             step = float(lot.get('stepSize',0)) or float(filters.get('LOT_SIZE',{}).get('stepSize',0))
             if step:
@@ -121,11 +130,11 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
                             'margin':actual/leverage,'leverage':leverage,'entry_fee':entry_fee,'mae':0.,'mfe':0.,
                             'amount':side*quantity,'mark':price,'stop_pct':stop,
                             'stop_price':px*(1-side*stop),'exit_plan':plan}
-        if s not in positions and s not in pending and pred in (-1,1):
+        if meta.get('entry_allowed',True) and s not in positions and s not in pending and pred in (-1,1):
             stop = max(.0008,meta.get('atr_proxy',.002)*1.5)
             if stop >= .5:
                 continue
-            pending[s] = {'due':t+latency_ms,'side':pred,'stop':stop,'take':max(.0026,stop*2)}
+            pending[s] = {'due':t+latency_ms,'side':pred,'stop':stop,'take':max(.0026,stop*2),'signal_row':row}
         equity = cash+sum((latest[k]['price']-p['entry'])*p['qty']*p['side'] for k,p in positions.items())
         peak = max(peak,equity)
         drawdown = max(drawdown,peak-equity)

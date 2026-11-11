@@ -5,12 +5,12 @@ import json
 
 def policy_for_settings(cfg, horizon_seconds=300):
     return {k:getattr(cfg,k) for k in (
-        'fee_rate','paper_slippage','paper_margin','paper_max_margin','paper_min_leverage',
+        'fee_rate','paper_slippage','paper_margin','paper_margin_is_ceiling','paper_max_margin','paper_min_leverage',
         'paper_max_leverage','paper_risk_fraction','paper_risk_buffer','paper_maintenance_rate',
         'paper_major_max_leverage',
         'paper_depth_participation','paper_depth_range_bps','paper_max_spread_bps',
         'max_positions','max_notional','paper_exploration_mode')} | {'horizon_seconds':horizon_seconds,
-            'entry_plan_schema':'shared-microstructure-v1',
+            'entry_plan_schema':'shared-microstructure-v2',
             'major_symbol_max_leverage':cfg.paper_major_max_leverage,
             'major_symbols':['BTCUSDT','ETHUSDT']}
 
@@ -18,7 +18,8 @@ def policy_for_settings(cfg, horizon_seconds=300):
 def microstructure_plan(row, liquidity, policy, positions, maximum, ai_parameters=None):
     """The same bounded entry sizing for research, event replay and paper orders.
 
-    Exploration treats margin as a ceiling; strict mode requires the full budget.
+    An explicit sizing policy can treat margin as a ceiling independently of
+    model approval. Legacy fixed-margin mode still requires the full budget.
     A narrow book never authorizes synthetic liquidity or a relaxed minimum lot.
     The caller supplies the causal covariance-adjusted notional ceiling.
     """
@@ -28,7 +29,7 @@ def microstructure_plan(row, liquidity, policy, positions, maximum, ai_parameter
     volatility = {'atr':atr*row['price'], 'stop_pct':max(.0008,1.5*atr),
                   'take_pct':max(.0026,3*atr), 'regime':'microstructure'}
     margin = policy['paper_margin']
-    if policy.get('paper_exploration_mode', False):
+    if policy.get('paper_margin_is_ceiling',False) or policy.get('paper_exploration_mode', False):
         margin = min(margin, maximum/minimum)
     if ai_parameters:
         margin = min(margin, float(ai_parameters['margin_usdt']))

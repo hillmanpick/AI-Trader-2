@@ -1,0 +1,773 @@
+{
+  "schema": "fixed-strategy-research-v1",
+  "status": "research_only",
+  "candidates": [
+    "numeric_fixed_060",
+    "cost_filtered_momentum",
+    "flow_confirmed_reversal"
+  ],
+  "folds": [
+    {
+      "train_samples": 29287,
+      "train_end_ms": 1793865983443,
+      "validation_end_ms": 1793995582323,
+      "test_end_ms": 1794125181203,
+      "validation": {
+        "numeric_fixed_060": {
+          "net_pnl": -16.941073375957785,
+          "trades": 8,
+          "win_rate": 0.5,
+          "profit_factor": 0.979707392125836,
+          "max_drawdown": 984.4681483306049,
+          "fees": 209.3722363739995,
+          "partial_fills": 0,
+          "rejected": 16,
+          "rejection_reasons": {
+            "late_quote": 4,
+            "direction_concentration": 12
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "ETHUSDT": 1,
+            "BTCUSDT": 1,
+            "SOLUSDT": 4,
+            "XRPUSDT": 1,
+            "DOGEUSDT": 2
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.004874682877349906,
+          "mfe_mean": 0.006443144811665885,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -6051.794761649988,
+          "trades": 81,
+          "win_rate": 0.18518518518518517,
+          "profit_factor": 0.14396704443657585,
+          "max_drawdown": 6131.685433635677,
+          "fees": 2269.4290933120806,
+          "partial_fills": 0,
+          "rejected": 62,
+          "rejection_reasons": {
+            "late_quote": 14,
+            "direction_concentration": 30,
+            "position_limit": 18
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "SOLUSDT": 5,
+            "ETHUSDT": 5,
+            "LINKUSDT": 11,
+            "BTCUSDT": 23,
+            "XRPUSDT": 12,
+            "BNBUSDT": 2,
+            "AVAXUSDT": 8,
+            "DOGEUSDT": 5
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.002665477894974878,
+          "mfe_mean": 0.0014529899124049272,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -2531.578630914446,
+          "trades": 43,
+          "win_rate": 0.32558139534883723,
+          "profit_factor": 0.30914364730643956,
+          "max_drawdown": 2532.7747507946915,
+          "fees": 1298.1535677125792,
+          "partial_fills": 0,
+          "rejected": 20,
+          "rejection_reasons": {
+            "late_quote": 6,
+            "direction_concentration": 10,
+            "position_limit": 4
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "LINKUSDT": 2,
+            "SOLUSDT": 4,
+            "BTCUSDT": 9,
+            "BNBUSDT": 1,
+            "DOGEUSDT": 3,
+            "AVAXUSDT": 5,
+            "XRPUSDT": 5,
+            "ETHUSDT": 3
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0025666815811408016,
+          "mfe_mean": 0.001825385882569179,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "selected_by_validation": null,
+      "test": {
+        "numeric_fixed_060": {
+          "net_pnl": 0.0,
+          "trades": 0,
+          "win_rate": 0,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "fees": 0.0,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": true,
+          "data_gaps_while_holding": {},
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": 0,
+          "mfe_mean": 0,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -278.9402024423907,
+          "trades": 4,
+          "win_rate": 0.25,
+          "profit_factor": 0.008416940096622168,
+          "max_drawdown": 287.5960863517539,
+          "fees": 155.8730625473879,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 5
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0016317599147935846,
+          "mfe_mean": 0.0006048327024904265,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -51.803268663265044,
+          "trades": 1,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 64.28999688345357,
+          "fees": 34.34804557026477,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": true,
+          "data_gaps_while_holding": {},
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0006889656704129887,
+          "mfe_mean": 0.000867256903271274,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "stress": {
+        "numeric_fixed_060": {
+          "net_pnl": 0.0,
+          "trades": 0,
+          "win_rate": 0,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "fees": 0.0,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": true,
+          "data_gaps_while_holding": {},
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": 0,
+          "mfe_mean": 0,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -236.61337819694018,
+          "trades": 3,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 236.61337819694018,
+          "fees": 106.77466964494957,
+          "partial_fills": 0,
+          "rejected": 1,
+          "rejection_reasons": {
+            "cost": 1
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.0019607950996373504,
+          "mfe_mean": 0.00038804644794047477,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -63.685000964353094,
+          "trades": 1,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 65.70029902816168,
+          "fees": 30.29804446036044,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": true,
+          "data_gaps_while_holding": {},
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.00098857921258666,
+          "mfe_mean": 0.0005671767742776446,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "selected_passed": false
+    },
+    {
+      "train_samples": 37159,
+      "train_end_ms": 1793995582323,
+      "validation_end_ms": 1794125181203,
+      "test_end_ms": 1794254780083,
+      "validation": {
+        "numeric_fixed_060": {
+          "net_pnl": 0.0,
+          "trades": 0,
+          "win_rate": 0,
+          "profit_factor": null,
+          "max_drawdown": 0.0,
+          "fees": 0.0,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": true,
+          "data_gaps_while_holding": {},
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": 0,
+          "mfe_mean": 0,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -278.9402024423907,
+          "trades": 4,
+          "win_rate": 0.25,
+          "profit_factor": 0.008416940096622168,
+          "max_drawdown": 287.5960863517539,
+          "fees": 155.8730625473879,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 5
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0016317599147935846,
+          "mfe_mean": 0.0006048327024904265,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -51.803268663265044,
+          "trades": 1,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 64.28999688345357,
+          "fees": 34.34804557026477,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": true,
+          "data_gaps_while_holding": {},
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0006889656704129887,
+          "mfe_mean": 0.000867256903271274,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "selected_by_validation": null,
+      "test": {
+        "numeric_fixed_060": {
+          "net_pnl": -0.6817287482263055,
+          "trades": 1,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 2.460000000006403,
+          "fees": 2.121984948239465,
+          "partial_fills": 0,
+          "rejected": 3,
+          "rejection_reasons": {
+            "late_quote": 3
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "AVAXUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.00012493334846686022,
+          "mfe_mean": 0.0011582289607166008,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -3399.624936418855,
+          "trades": 63,
+          "win_rate": 0.23809523809523808,
+          "profit_factor": 0.30655624816566057,
+          "max_drawdown": 3463.550243284859,
+          "fees": 1832.6522174190459,
+          "partial_fills": 0,
+          "rejected": 39,
+          "rejection_reasons": {
+            "late_quote": 13,
+            "direction_concentration": 7,
+            "position_limit": 19
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 13,
+            "BTCUSDT": 9,
+            "ETHUSDT": 4,
+            "SOLUSDT": 7,
+            "LINKUSDT": 6,
+            "AVAXUSDT": 6,
+            "DOGEUSDT": 5,
+            "BNBUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0025622274787620186,
+          "mfe_mean": 0.001854508636726562,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -1915.2968494446977,
+          "trades": 35,
+          "win_rate": 0.2857142857142857,
+          "profit_factor": 0.24205849259096462,
+          "max_drawdown": 2115.8696506134875,
+          "fees": 1028.6108266997269,
+          "partial_fills": 0,
+          "rejected": 11,
+          "rejection_reasons": {
+            "late_quote": 7,
+            "direction_concentration": 3,
+            "position_limit": 1
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 9,
+            "SOLUSDT": 5,
+            "BTCUSDT": 6,
+            "LINKUSDT": 4,
+            "DOGEUSDT": 2,
+            "ETHUSDT": 1,
+            "BNBUSDT": 1,
+            "AVAXUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0019401631508144002,
+          "mfe_mean": 0.0018155989129211856,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "stress": {
+        "numeric_fixed_060": {
+          "net_pnl": -1.9474758649303112,
+          "trades": 1,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 2.702801398932934,
+          "fees": 2.12198826492893,
+          "partial_fills": 0,
+          "rejected": 3,
+          "rejection_reasons": {
+            "late_quote": 3
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "AVAXUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.00042471599887194955,
+          "mfe_mean": 0.0008580615924493884,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -3900.4778954913054,
+          "trades": 56,
+          "win_rate": 0.16071428571428573,
+          "profit_factor": 0.22363665345584205,
+          "max_drawdown": 3964.2621478938527,
+          "fees": 1535.7986327793294,
+          "partial_fills": 0,
+          "rejected": 49,
+          "rejection_reasons": {
+            "cost": 11,
+            "late_quote": 13,
+            "direction_concentration": 9,
+            "position_limit": 16
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 13,
+            "BTCUSDT": 9,
+            "ETHUSDT": 4,
+            "SOLUSDT": 7,
+            "LINKUSDT": 6,
+            "DOGEUSDT": 4,
+            "AVAXUSDT": 3
+          },
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.0029244841103385866,
+          "mfe_mean": 0.0015842202069129721,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -1465.188520537893,
+          "trades": 32,
+          "win_rate": 0.28125,
+          "profit_factor": 0.265010257182854,
+          "max_drawdown": 1584.0501553290815,
+          "fees": 839.318357085882,
+          "partial_fills": 0,
+          "rejected": 14,
+          "rejection_reasons": {
+            "late_quote": 7,
+            "direction_concentration": 2,
+            "cost": 4,
+            "position_limit": 1
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 10,
+            "SOLUSDT": 3,
+            "BTCUSDT": 5,
+            "LINKUSDT": 4,
+            "DOGEUSDT": 1,
+            "BNBUSDT": 1,
+            "AVAXUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.0019222659398563102,
+          "mfe_mean": 0.001811188027948392,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "selected_passed": false
+    },
+    {
+      "train_samples": 44702,
+      "train_end_ms": 1794125181203,
+      "validation_end_ms": 1794254780083,
+      "test_end_ms": 1794384378963,
+      "validation": {
+        "numeric_fixed_060": {
+          "net_pnl": -0.6817287482263055,
+          "trades": 1,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 2.460000000006403,
+          "fees": 2.121984948239465,
+          "partial_fills": 0,
+          "rejected": 3,
+          "rejection_reasons": {
+            "late_quote": 3
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "AVAXUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.00012493334846686022,
+          "mfe_mean": 0.0011582289607166008,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -3399.624936418855,
+          "trades": 63,
+          "win_rate": 0.23809523809523808,
+          "profit_factor": 0.30655624816566057,
+          "max_drawdown": 3463.550243284859,
+          "fees": 1832.6522174190459,
+          "partial_fills": 0,
+          "rejected": 39,
+          "rejection_reasons": {
+            "late_quote": 13,
+            "direction_concentration": 7,
+            "position_limit": 19
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 13,
+            "BTCUSDT": 9,
+            "ETHUSDT": 4,
+            "SOLUSDT": 7,
+            "LINKUSDT": 6,
+            "AVAXUSDT": 6,
+            "DOGEUSDT": 5,
+            "BNBUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0025622274787620186,
+          "mfe_mean": 0.001854508636726562,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -1915.2968494446977,
+          "trades": 35,
+          "win_rate": 0.2857142857142857,
+          "profit_factor": 0.24205849259096462,
+          "max_drawdown": 2115.8696506134875,
+          "fees": 1028.6108266997269,
+          "partial_fills": 0,
+          "rejected": 11,
+          "rejection_reasons": {
+            "late_quote": 7,
+            "direction_concentration": 3,
+            "position_limit": 1
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "XRPUSDT": 9,
+            "SOLUSDT": 5,
+            "BTCUSDT": 6,
+            "LINKUSDT": 4,
+            "DOGEUSDT": 2,
+            "ETHUSDT": 1,
+            "BNBUSDT": 1,
+            "AVAXUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0019401631508144002,
+          "mfe_mean": 0.0018155989129211856,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "selected_by_validation": null,
+      "test": {
+        "numeric_fixed_060": {
+          "net_pnl": -112.19400410851813,
+          "trades": 2,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 121.5186454779614,
+          "fees": 22.272480482515697,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": false,
+          "data_gaps_while_holding": {
+            "LINKUSDT": 1,
+            "SOLUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.003834932379000011,
+          "mfe_mean": 0.0011445786256855106,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -1542.8715036000358,
+          "trades": 58,
+          "win_rate": 0.2413793103448276,
+          "profit_factor": 0.41759135951062026,
+          "max_drawdown": 1712.670213207879,
+          "fees": 1301.5219797731345,
+          "partial_fills": 0,
+          "rejected": 19,
+          "rejection_reasons": {
+            "direction_concentration": 11,
+            "late_quote": 6,
+            "position_limit": 2
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "AVAXUSDT": 10,
+            "BTCUSDT": 5,
+            "XRPUSDT": 7,
+            "LINKUSDT": 10,
+            "ETHUSDT": 2,
+            "DOGEUSDT": 3,
+            "SOLUSDT": 6
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0017996813141562464,
+          "mfe_mean": 0.001687381349681892,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -690.6914851811889,
+          "trades": 24,
+          "win_rate": 0.25,
+          "profit_factor": 0.27325518407120025,
+          "max_drawdown": 778.1420816069149,
+          "fees": 461.3902650672169,
+          "partial_fills": 0,
+          "rejected": 1,
+          "rejection_reasons": {
+            "direction_concentration": 1
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "AVAXUSDT": 5,
+            "LINKUSDT": 5,
+            "ETHUSDT": 1,
+            "SOLUSDT": 1,
+            "DOGEUSDT": 4,
+            "BTCUSDT": 3,
+            "XRPUSDT": 2
+          },
+          "research_only": true,
+          "latency_ms": 500,
+          "mae_mean": -0.0020593795060646855,
+          "mfe_mean": 0.00187182286787226,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "stress": {
+        "numeric_fixed_060": {
+          "net_pnl": -113.51426267462375,
+          "trades": 2,
+          "win_rate": 0.0,
+          "profit_factor": 0.0,
+          "max_drawdown": 116.30832267500227,
+          "fees": 20.20036234262319,
+          "partial_fills": 0,
+          "rejected": 0,
+          "rejection_reasons": {},
+          "valid": false,
+          "data_gaps_while_holding": {
+            "LINKUSDT": 1,
+            "SOLUSDT": 1
+          },
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.00413360269709534,
+          "mfe_mean": 0.0008444153500632989,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "cost_filtered_momentum": {
+          "net_pnl": -1461.7475996699213,
+          "trades": 45,
+          "win_rate": 0.2222222222222222,
+          "profit_factor": 0.3439890876902711,
+          "max_drawdown": 1841.3889324616175,
+          "fees": 878.7010035960197,
+          "partial_fills": 0,
+          "rejected": 35,
+          "rejection_reasons": {
+            "cost": 22,
+            "late_quote": 7,
+            "direction_concentration": 5,
+            "position_limit": 1
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "AVAXUSDT": 7,
+            "BTCUSDT": 4,
+            "LINKUSDT": 9,
+            "ETHUSDT": 1,
+            "XRPUSDT": 4,
+            "SOLUSDT": 5
+          },
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.00221971453509433,
+          "mfe_mean": 0.0016921279368280917,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        },
+        "flow_confirmed_reversal": {
+          "net_pnl": -814.4337455847999,
+          "trades": 20,
+          "win_rate": 0.2,
+          "profit_factor": 0.16988255219504883,
+          "max_drawdown": 833.1717075492488,
+          "fees": 375.5780572388155,
+          "partial_fills": 0,
+          "rejected": 6,
+          "rejection_reasons": {
+            "cost": 6
+          },
+          "valid": false,
+          "data_gaps_while_holding": {
+            "AVAXUSDT": 2,
+            "LINKUSDT": 5,
+            "ETHUSDT": 1,
+            "SOLUSDT": 1,
+            "BTCUSDT": 3,
+            "XRPUSDT": 2
+          },
+          "research_only": true,
+          "latency_ms": 1500,
+          "mae_mean": -0.002238748827575765,
+          "mfe_mean": 0.0018430765995867404,
+          "funding": "absolute rate prorated, conservative fallback 10bps/8h"
+        }
+      },
+      "selected_passed": false
+    }
+  ],
+  "policy": {
+    "fee_rate": 0.0005,
+    "paper_slippage": 0.0003,
+    "paper_margin": 2000.0,
+    "paper_max_margin": 6000.0,
+    "paper_min_leverage": 2,
+    "paper_max_leverage": 20,
+    "paper_risk_fraction": 0.1,
+    "paper_risk_buffer": 0.001,
+    "paper_maintenance_rate": 0.005,
+    "paper_major_max_leverage": 100,
+    "paper_depth_participation": 0.05,
+    "paper_depth_range_bps": 10.0,
+    "paper_max_spread_bps": 10.0,
+    "max_positions": 3,
+    "max_notional": 120000.0,
+    "horizon_seconds": 300,
+    "major_symbol_max_leverage": 100,
+    "major_symbols": [
+      "BTCUSDT",
+      "ETHUSDT"
+    ],
+    "paper_exploration_mode": true,
+    "entry_plan_schema": "shared-microstructure-v1"
+  },
+  "criteria": "validation selection only; >=30 trades, net>0, PF>=1.1, DD<=3000, continuous samples",
+  "all_selected_folds_passed": false,
+  "promotion_allowed": false,
+  "execution_enabled": false,
+  "limitations": [
+    "Sampled quotes are preliminary, not tick replay or live profitability evidence",
+    "No parameter search, model overwrite or simulated-account writes",
+    "Historical quantity filters and uninterrupted event holdouts remain required",
+    "Fixed candidate comparison is research; fresh prospective evidence is still required"
+  ],
+  "manifest": {
+    "sha256": "df8fb878d317a60e8cdcd03e28fcb4fd4f91650d1f0991327d94027a46727519",
+    "quotes": 312640,
+    "labels": 61815,
+    "requested_start_ms": 1793520384318,
+    "requested_end_ms": 1794384384318,
+    "source": "frozen_gzip_export"
+  },
+  "code_hashes": {
+    "strategy_research.py": "3e7b1985d281376d0675e80b4defda53995a23862d1f39093a1fee4866311aa9",
+    "execution_policy.py": "ad915be87b158a92cef3a788e847bfcd700242575bf2d4ab10996237e0746fb9",
+    "lab_replay.py": "4dfbe8f3ca27bb53863b3ccbc2587f9ef974d1e189c72fb4560191725959e67f",
+    "lab_model.py": "95880b6d11264cf7ea562e023caac98dc21b148ab00e81c9b16d21ae41fd1f43",
+    "lab_train.py": "a600928395ecabc1044fd0f684d8a412f665d76a32241e009bb980bc7a0cc0bc",
+    "strategies.py": "ac5dcc9461abcea164069e6881c4d038479849fb93089eabdad297ac717c1553"
+  },
+  "experiment_id": "fcc74be02b525134f8685aaccea52597a40285e2dc0074cc35adf58ea965f111"
+}

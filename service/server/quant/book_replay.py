@@ -39,6 +39,7 @@ class HistoricalBookReplay:
                                                 'reconstructed_depth_updates':0,'sequence_gaps':0})
         self.gap_details = []
         self.first_ns = None
+        self.retired_symbols = set()
 
     def record_gap(self, symbol, kind, now, previous, payload):
         self.gaps += 1
@@ -74,10 +75,14 @@ class HistoricalBookReplay:
         trade = None
         if kind=='depthStatus':
             for s in p.get('symbols', [symbol] if symbol else []):
+                if p.get('status')=='retired' and p.get('reason')=='candidate_observation_expired':
+                    self.retired_symbols.add(s)
+                    self.seen_ids.pop(('trade',s),None)
                 if s in self.books:
                     self.books[s].invalidate()
                 self.buffers[s].clear()
         elif kind=='depthSnapshot':
+            self.retired_symbols.discard(symbol)
             stats['snapshots'] += 1
             book = self.books.setdefault(symbol,DepthBook())
             book.seed(p,now//1000000)
@@ -85,6 +90,7 @@ class HistoricalBookReplay:
                 if book.last is not None and int(pending['u'])>=book.last:
                     self.apply_depth(symbol,pending,now)
         elif kind=='depthUpdate':
+            self.retired_symbols.discard(symbol)
             stats['depth_updates'] += 1
             book = self.books.setdefault(symbol,DepthBook())
             self.buffers[symbol].append(p)
@@ -126,9 +132,9 @@ class HistoricalBookReplay:
                 'depth_age_ms':(self.last_ns//1000000-book.updated_ms) if book else None}
             if symbol in self.expected_symbols and not symbols[symbol]['reconstructed_depth_updates']:
                 reasons.append('missing_requested_depth:'+symbol)
-            if book and not book.ready:
+            if book and not book.ready and symbol not in self.retired_symbols:
                 reasons.append('unreconstructed_depth:'+symbol)
-            if book and book.ready and self.last_ns//1000000-book.updated_ms > 2000:
+            if book and book.ready and symbol not in self.retired_symbols and self.last_ns//1000000-book.updated_ms > 2000:
                 reasons.append('stale_depth_at_end:'+symbol)
         report = {'valid':not reasons,'invalid_reasons':reasons,
                 'first_received_ns':self.first_ns,'last_received_ns':self.last_ns,

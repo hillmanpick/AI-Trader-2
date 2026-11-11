@@ -111,6 +111,35 @@ def compact(report):
     return {k:v for k,v in report.items() if k != 'fills'}
 
 
+class SampledModelSignals:
+    """Bounded per-fit scores; changing a threshold never recomputes logits.
+
+    Historical samples are immutable (symbol, timestamp) observations. Cache
+    only a side and confidence, never future prices, labels, or model decisions.
+    A new fitted model always gets a new scorer.
+    """
+    def __init__(self, model, max_rows=120000):
+        self.model, self.max_rows, self.cache = model, max_rows, {}
+        self.inferences = self.hits = 0
+
+    def direction(self, row, threshold):
+        if not row['meta'].get('entry_allowed',True):
+            return 0
+        key=(row['symbol'],row['ts'])
+        score=self.cache.get(key)
+        if score is None:
+            p=probabilities(self.model,row['vector'])
+            side=max(p,key=p.get)
+            score=(side,p[side])
+            self.inferences+=1
+            if len(self.cache)<self.max_rows:
+                self.cache[key]=score
+        else:
+            self.hits+=1
+        side,confidence=score
+        return side if confidence>=threshold else 0
+
+
 def passes(report):
     return (report.get('valid',True) and report['trades'] >= 30 and report['net_pnl'] > 0
             and (report['profit_factor'] or 0) >= 1.1 and report['max_drawdown'] <= 3000)
@@ -150,16 +179,12 @@ def train(cfg, gradient=False):
     span = end_research-start
     folds, final_model = [],None
     execution_policy = current_policy(cfg.horizon_seconds)
-    def quote_replay(model, start_ms, end_ms, threshold, stress=False):
-        candidate = model | {'threshold':threshold}
-        candidate['version'] = model_version(candidate)
+    def quote_replay(scorer, start_ms, end_ms, threshold, stress=False):
         policy = dict(execution_policy)
         if stress:
             policy['paper_slippage'] *= 2
-        from .lab_model import decide
         def direction(row):
-            action = decide(candidate,row)['action']
-            return 1 if action=='long' else -1 if action=='short' else 0
+            return scorer.direction(row,threshold)
         return replay(store.market_rows(start_ms,end_ms),(),signal_fn=direction,policy=policy,
                       horizon_ms=cfg.horizon_seconds*1000,latency_ms=1500 if stress else 500)
     for train_fraction,val_fraction,test_fraction in ((.4,.55,.7),(.55,.7,.85),(.7,.85,1.)):
@@ -167,17 +192,19 @@ def train(cfg, gradient=False):
         if min(len(tr),len(va),len(te)) < 100:
             raise ValueError('Not enough independent chronological fold samples')
         model = fit(tr)
+        scorer = SampledModelSignals(model)
         # Select threshold using validation only; test never chooses parameters.
         options = []
         for threshold in (.45,.5,.55,.6,.65,.7):
-            r = quote_replay(model,int(start+span*train_fraction),int(start+span*val_fraction),threshold)
-            options.append((r['net_pnl'] if r['trades'] >= 30 else -1e99,threshold,r))
+            r = quote_replay(scorer,int(start+span*train_fraction),int(start+span*val_fraction),threshold)
+            options.append((r['net_pnl'] if r.get('valid') and r['trades'] >= 30 else -1e99,threshold,r))
         _,threshold,validation = max(options,key=lambda x:x[0])
-        test = quote_replay(model,int(start+span*val_fraction),int(start+span*test_fraction),threshold)
-        stress = quote_replay(model,int(start+span*val_fraction),int(start+span*test_fraction),threshold,True)
+        test = quote_replay(scorer,int(start+span*val_fraction),int(start+span*test_fraction),threshold)
+        stress = quote_replay(scorer,int(start+span*val_fraction),int(start+span*test_fraction),threshold,True)
         folds.append({'train_samples':len(tr),'validation_samples':len(va),'test_samples':len(te),
                       'train_end_ms':max(r['label_end'] for r in tr),'test_start_ms':te[0]['ts'],
-                      'threshold':threshold,'validation':compact(validation),'test':compact(test),'stress':compact(stress)})
+                      'threshold':threshold,'validation':compact(validation),'test':compact(test),'stress':compact(stress),
+                      'inference_cache':{'scores':len(scorer.cache),'inferences':scorer.inferences,'hits':scorer.hits}})
         final_model = model | {'threshold':threshold,'test':compact(test)}
     research_passed = all(passes(f['test']) and f['stress']['net_pnl'] > 0 and f['validation']['net_pnl'] > 0 for f in folds)
     # Fit a single final model before both event holdouts, with its own exact
@@ -204,7 +231,7 @@ def train(cfg, gradient=False):
               'gradient':{'enabled':False},'training_stride_seconds':30,
               'label_schema':LABEL_SCHEMA,'execution_validation':proof,
               'replay_limits':'sampled folds are preliminary; final model requires separate individual-event holdouts'}
-    report['execution_quotes'] = 'all causal quality samples, not filtered by future label availability'
+    report['execution_quotes'] = 'causal features plus independent exit-only depth quotes; no future-label filter'
     report['policy'] = execution_policy
     if gradient:
         from sklearn.ensemble import HistGradientBoostingClassifier

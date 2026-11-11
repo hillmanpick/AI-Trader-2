@@ -1,0 +1,565 @@
+{
+  "status": "rejected",
+  "schema": "microstructure-v3",
+  "at_ms": 1794390768942,
+  "folds": [
+    {
+      "train_samples": 151208,
+      "validation_samples": 59731,
+      "test_samples": 43459,
+      "train_end_ms": 1793663526535,
+      "test_start_ms": 1793843371884,
+      "threshold": 0.45,
+      "validation": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 266,
+        "rejection_reasons": {
+          "risk_or_liquidity": 229,
+          "late_quote": 22,
+          "cost": 15
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0003,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "test": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 484,
+        "rejection_reasons": {
+          "risk_or_liquidity": 400,
+          "late_quote": 58,
+          "cost": 26
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0003,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "stress": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 484,
+        "rejection_reasons": {
+          "risk_or_liquidity": 366,
+          "late_quote": 58,
+          "cost": 60
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0006,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 1500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "inference_cache": {
+        "scores": 117293,
+        "inferences": 117293,
+        "hits": 374049
+      }
+    },
+    {
+      "train_samples": 211011,
+      "validation_samples": 43459,
+      "test_samples": 43341,
+      "train_end_ms": 1793843344724,
+      "test_start_ms": 1794023194953,
+      "threshold": 0.45,
+      "validation": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 464,
+        "rejection_reasons": {
+          "risk_or_liquidity": 387,
+          "late_quote": 50,
+          "cost": 27
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0003,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "test": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 300,
+        "rejection_reasons": {
+          "late_quote": 55,
+          "risk_or_liquidity": 231,
+          "cost": 14
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0003,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "stress": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 300,
+        "rejection_reasons": {
+          "late_quote": 55,
+          "risk_or_liquidity": 199,
+          "cost": 46
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0006,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 1500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "inference_cache": {
+        "scores": 107780,
+        "inferences": 107780,
+        "hits": 320196
+      }
+    },
+    {
+      "train_samples": 254572,
+      "validation_samples": 43341,
+      "test_samples": 43152,
+      "train_end_ms": 1794023164628,
+      "test_start_ms": 1794203027531,
+      "threshold": 0.45,
+      "validation": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 267,
+        "rejection_reasons": {
+          "risk_or_liquidity": 208,
+          "late_quote": 46,
+          "cost": 13
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0003,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "test": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 278,
+        "rejection_reasons": {
+          "risk_or_liquidity": 207,
+          "late_quote": 50,
+          "cost": 21
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0003,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "stress": {
+        "net_pnl": 0.0,
+        "trades": 0,
+        "win_rate": 0,
+        "profit_factor": null,
+        "max_drawdown": 0.0,
+        "fees": 0.0,
+        "partial_fills": 0,
+        "rejected": 278,
+        "rejection_reasons": {
+          "risk_or_liquidity": 181,
+          "cost": 47,
+          "late_quote": 50
+        },
+        "valid": true,
+        "data_gaps_while_holding": {},
+        "research_only": true,
+        "policy": {
+          "fee_rate": 0.0005,
+          "paper_slippage": 0.0006,
+          "paper_margin": 2000.0,
+          "paper_max_margin": 6000.0,
+          "paper_risk_fraction": 0.1,
+          "paper_min_leverage": 2,
+          "paper_max_leverage": 20,
+          "paper_major_max_leverage": 100,
+          "paper_maintenance_rate": 0.005,
+          "paper_risk_buffer": 0.001,
+          "paper_depth_participation": 0.05,
+          "paper_max_spread_bps": 10.0,
+          "max_positions": 3,
+          "max_notional": 120000.0,
+          "paper_exploration_mode": false,
+          "paper_depth_range_bps": 10.0,
+          "horizon_seconds": 300,
+          "entry_plan_schema": "shared-microstructure-v1",
+          "major_symbol_max_leverage": 100,
+          "major_symbols": [
+            "BTCUSDT",
+            "ETHUSDT"
+          ]
+        },
+        "latency_ms": 1500,
+        "mae_mean": 0,
+        "mfe_mean": 0,
+        "funding": "absolute rate prorated, conservative fallback 10bps/8h",
+        "limitations": [
+          "Sampled quotes cannot reconstruct intrasecond paths or queue priority",
+          "Visible depth participation approximates impact and partial fills",
+          "Training replay omits per-sample exchange quantity filters to bound RAM",
+          "Survivorship and candidate-selection history limits remain"
+        ]
+      },
+      "inference_cache": {
+        "scores": 106829,
+        "inferences": 106829,
+        "hits": 325533
+      }
+    }
+  ],
+  "samples": 343369,
+  "coverage_days": 12.530555555555555,
+  "method": "expanding purged walk-forward; full-horizon embargo; validation-only threshold",
+  "criteria": "each test >=30 trades, net>0, PF>=1.1, DD<=3000; stress net>0",
+  "gradient": {
+    "enabled": false
+  },
+  "training_stride_seconds": 30,
+  "label_schema": "individual-trade-barriers-v1",
+  "execution_validation": {
+    "passed": false,
+    "model_version": "9c0fdba920266887450420c6",
+    "reason": "sampled_research_gate_failed"
+  },
+  "replay_limits": "sampled folds are preliminary; final model requires separate individual-event holdouts",
+  "execution_quotes": "causal features plus independent exit-only depth quotes; no future-label filter",
+  "policy": {
+    "fee_rate": 0.0005,
+    "paper_slippage": 0.0003,
+    "paper_margin": 2000.0,
+    "paper_max_margin": 6000.0,
+    "paper_min_leverage": 2,
+    "paper_max_leverage": 20,
+    "paper_risk_fraction": 0.1,
+    "paper_risk_buffer": 0.001,
+    "paper_maintenance_rate": 0.005,
+    "paper_major_max_leverage": 100,
+    "paper_depth_participation": 0.05,
+    "paper_depth_range_bps": 10.0,
+    "paper_max_spread_bps": 10.0,
+    "max_positions": 3,
+    "max_notional": 120000.0,
+    "paper_exploration_mode": false,
+    "horizon_seconds": 300,
+    "entry_plan_schema": "shared-microstructure-v1",
+    "major_symbol_max_leverage": 100,
+    "major_symbols": [
+      "BTCUSDT",
+      "ETHUSDT"
+    ]
+  },
+  "model_version": "9c0fdba920266887450420c6"
+}

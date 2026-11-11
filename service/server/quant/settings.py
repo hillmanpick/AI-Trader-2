@@ -46,6 +46,7 @@ class Settings:
     paper_review_relaxed: bool = False
     paper_slippage: float = 0
     paper_margin: float = 0
+    paper_margin_is_ceiling: bool = False
     paper_max_margin: float = 0
     paper_maintenance_rate: float = .005
     paper_dynamic_exits: bool = False
@@ -177,6 +178,7 @@ class Settings:
             'ai_min_confidence': self.ai_min_confidence,
             'paper_slippage_bps': self.paper_slippage * 10000,
             'paper_margin': self.paper_margin,
+            'paper_margin_is_ceiling': self.paper_margin_is_ceiling,
             'paper_max_margin': self.paper_max_margin,
             'paper_maintenance_rate': self.paper_maintenance_rate,
             'paper_dynamic_exits': self.paper_dynamic_exits,
