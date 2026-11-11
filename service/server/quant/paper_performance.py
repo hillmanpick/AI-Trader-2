@@ -1,11 +1,11 @@
 """Read-only PnL reconstruction from the durable fills, independent of deposits."""
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from .mail_format import local_time
 
 
-def paper_performance(store, now=None):
+def paper_performance(store, now=None, *, include_trades=False):
     local = local_time(now)
     end_ns = int(local.timestamp()*1e9)
     day_ns = int(local.replace(hour=0,minute=0,second=0,microsecond=0).timestamp()*1e9)
@@ -17,7 +17,7 @@ def paper_performance(store, now=None):
         rows = c.execute('SELECT f.quantity,f.price,f.fee,f.at_ns,o.body FROM execution_fills f '
                          'JOIN execution_orders o ON o.id=f.order_id WHERE f.at_ns<=? ORDER BY f.at_ns,f.rowid',
                          (end_ns,)).fetchall()
-    positions = {}
+    positions, completed = {}, []
     result = {'scope':'盘口模拟成交账本（不含旧策略历史和追加资金）','net':0.,'today_net':0.,'recent_net':0.,'fees':0.,
               'yesterday_net':0.,'gross':0.,'completed_trades':0,'wins':0,'win_rate':0.}
     for quantity,price,fee,stamp,raw in rows:
@@ -35,6 +35,8 @@ def paper_performance(store, now=None):
                 gross = max(gross-fee,-old['margin']*ratio)+fee
             net = gross-old['fee']*ratio-fee
             old['cycle_net'] += net
+            old['cycle_gross'] += gross
+            old['cycle_cost'] += old['fee']*ratio+fee
             result['gross'] += gross
             result['net'] += net
             if stamp>=day_ns:
@@ -46,6 +48,16 @@ def paper_performance(store, now=None):
             if ratio>=1-1e-10:
                 result['completed_trades'] += 1
                 result['wins'] += int(old['cycle_net']>0)
+                context = old['context']
+                completed.append({'cycle_id':old['cycle_id'],'symbol':o['symbol'],
+                    'side':'long' if old['side']>0 else 'short',
+                    'at':datetime.fromtimestamp(stamp/1e9,timezone.utc).isoformat(),
+                    'hold_seconds':(stamp-old['opened_ns'])/1e9,
+                    'gross_pnl':old['cycle_gross'],'cost_usdt':old['cycle_cost'],
+                    'net_pnl':old['cycle_net'],'exit_reason':o.get('reason'),
+                    'model_version':context.get('model_version'),
+                    'strategy_version':context.get('strategy_version',1),
+                    'regime':context.get('regime','unknown')})
                 positions.pop(o['symbol'])
             else:
                 old['quantity'] -= qty
@@ -59,7 +71,14 @@ def paper_performance(store, now=None):
                 'entry':((old['quantity']*old['entry'] if old else 0)+qty*price)/total,
                 'fee':(old['fee'] if old else 0)+fee,
                 'cycle_net':old['cycle_net'] if old else 0.,
+                'cycle_gross':old['cycle_gross'] if old else 0.,
+                'cycle_cost':old['cycle_cost'] if old else 0.,
+                'cycle_id':old['cycle_id'] if old else o['id'],
+                'opened_ns':old['opened_ns'] if old else stamp,
+                'context':old['context'] if old else o.get('paper_context',{}),
                 'margin':(old['margin'] if old else 0)+qty*price/leverage}
     if result['completed_trades']:
         result['win_rate'] = result['wins']/result['completed_trades']
+    if include_trades:
+        result['completed_positions'] = completed
     return result

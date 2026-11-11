@@ -3,11 +3,17 @@ import gzip
 import json
 import sqlite3
 import time
+import threading
+from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 import redis
+
+
+_stats_cache = OrderedDict()
+_stats_lock = threading.Lock()
 
 
 class RealtimeBus:
@@ -75,34 +81,60 @@ class LabStore:
                 rows.append({'symbol':s,'ts':t,'price':p,'vector':json.loads(v),'meta':meta})
         return rows
 
-    def stats(self):
+    def stats(self, cache_seconds=0):
+        # Dashboard polls share a bounded result and never wait for a full scan.
+        # Training bypasses this cache. Stale values retain their observation time.
+        if cache_seconds > 0:
+            key = str(self.path.resolve())
+            with _stats_lock:
+                cached = _stats_cache.setdefault(key, {'running':False,'attempt':0,'result':None})
+                _stats_cache.move_to_end(key)
+                if not cached['running'] and time.monotonic()-cached['attempt'] >= cache_seconds:
+                    cached.update(running=True, attempt=time.monotonic())
+                    def refresh():
+                        try:
+                            result = self.stats()
+                            result['stats_updated_ms'] = int(time.time()*1000)
+                            with _stats_lock:
+                                cached['result'] = json.dumps(result)
+                                cached.pop('error',None)
+                        except Exception:
+                            with _stats_lock:
+                                cached['error'] = 'Historical statistics refresh failed'
+                        finally:
+                            with _stats_lock:
+                                cached.update(running=False,attempt=time.monotonic())
+                    threading.Thread(target=refresh,name='lab-history-stats',daemon=True).start()
+                result = json.loads(cached['result']) if cached['result'] else {
+                    'status':'calculating','stats_updated_ms':None}
+                result['stats_refreshing'] = cached['running']
+                if cached.get('error'):
+                    result['stats_error'] = cached['error']
+                for old_key in list(_stats_cache):
+                    if len(_stats_cache) <= 8:
+                        break
+                    if not _stats_cache[old_key]['running']:
+                        del _stats_cache[old_key]
+                return result
+        from .event_labels import LABEL_SCHEMA
+        from .lab_features import SCHEMA
         with self.connect() as c:
             n, start, end = c.execute('SELECT COUNT(*),MIN(ts),MAX(ts) FROM samples').fetchone()
             report = c.execute('SELECT report FROM reports ORDER BY id DESC LIMIT 1').fetchone()
             labels = c.execute('SELECT COUNT(*),COALESCE(SUM(valid),0),MIN(ts),MAX(ts) FROM event_labels').fetchone()
-            clean_rows = c.execute('''SELECT s.ts,s.meta,l.body
+            # Aggregate inside SQLite, never materialize millions of JSON rows.
+            clean_count, clean_start, clean_end = c.execute('''SELECT COUNT(*),MIN(s.ts),MAX(s.ts)
                 FROM samples s JOIN event_labels l ON s.symbol=l.symbol AND s.ts=l.ts
-                WHERE l.valid=1 ORDER BY s.ts''').fetchall()
-        from .event_labels import LABEL_SCHEMA
-        from .lab_features import SCHEMA
-        clean_times = []
-        for ts,meta,body in clean_rows:
-            try:
-                meta, label = json.loads(meta), json.loads(body)
-            except (TypeError,ValueError,json.JSONDecodeError):
-                continue
-            # Keep this gate identical to labeled_rows; schema and label
-            # versions must match before a row is counted as model evidence.
-            if meta.get('schema') == SCHEMA and label.get('schema') == LABEL_SCHEMA:
-                clean_times.append(ts)
-        clean_start = min(clean_times) if clean_times else None
-        clean_end = max(clean_times) if clean_times else None
+                WHERE l.valid=1
+                  AND CASE WHEN json_valid(s.meta) THEN json_extract(s.meta,'$.schema') END=?
+                  AND CASE WHEN json_valid(l.body) THEN json_extract(l.body,'$.schema') END=?''',
+                (SCHEMA, LABEL_SCHEMA)).fetchone()
         return {'samples': n, 'start_ms': start, 'end_ms': end,
                 'days': (end-start)/86400000 if start is not None and end is not None else 0,
                 'latest_report': json.loads(report[0]) if report else None,
                 'event_labels':{'total':labels[0],'valid':labels[1],
                                 'invalid':labels[0]-labels[1],'start_ms':labels[2],'end_ms':labels[3]},
-                'clean_training':{'samples':len(clean_times),'start_ms':clean_start,'end_ms':clean_end,
+                'clean_training':{'samples':clean_count,'start_ms':clean_start,'end_ms':clean_end,
                                   'days':(clean_end-clean_start)/86400000 if clean_start is not None else 0,
                                   'schema':SCHEMA,'label_schema':LABEL_SCHEMA}}
 
@@ -133,6 +165,28 @@ class LabStore:
     def report(self, report):
         with self.connect() as c:
             c.execute('INSERT INTO reports(ts,report) VALUES (?,?)', (int(time.time()*1000), json.dumps(report, allow_nan=False)))
+
+    def market_rows(self, start_ms, end_ms, stride_ms=30000):
+        """Chronological execution quotes, independent of future label validity.
+
+        The stride is per symbol. Training labels must never select which market
+        paths are visible to the replay. This remains sampled-quote research.
+        """
+        with self.connect() as c:
+            cursor = c.execute('SELECT symbol,ts,price,vector,meta FROM samples '
+                               'WHERE ts>=? AND ts<? ORDER BY ts,symbol',(start_ms,end_ms))
+            last = {}
+            for symbol,ts,price,vector,meta in cursor:
+                if ts//stride_ms == last.get(symbol):
+                    continue
+                last[symbol] = ts//stride_ms
+                meta = json.loads(meta)
+                from .lab_features import SCHEMA
+                if meta.get('schema') != SCHEMA or not meta.get('quality'):
+                    continue
+                meta = {k:meta[k] for k in ('quality','schema','bid','ask','bid_depth','ask_depth',
+                            'spread_bps','atr_proxy','funding_rate','filters') if k in meta}
+                yield {'symbol':symbol,'ts':ts,'price':price,'vector':json.loads(vector),'meta':meta}
 
     def prune(self, days):
         with self.connect() as c:

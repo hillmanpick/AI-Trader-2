@@ -12,11 +12,11 @@ from pathlib import Path
 from .book_replay import HistoricalBookReplay
 from .correlation_risk import cap_notional
 from .event_lake import EventLake
-from .execution_policy import fingerprint, model_version, leverage_bounds
+from .execution_policy import fingerprint, model_version, microstructure_plan
 from .execution_state import OrderJournal, SimulatedBroker
 from .lab_model import decide
 from .market_ranker import MarketRanker
-from .strategies import size_risk_plan, update_dynamic_exit
+from .strategies import update_dynamic_exit
 
 REPLAY_SCHEMA = 'portfolio-individual-events-v3'
 KINDS = {'depthSnapshot','depthUpdate','trade','feature','feedStatus','depthStatus','candidates'}
@@ -115,26 +115,15 @@ class ModelEventReplay(HistoricalBookReplay):
             if liquidity['spread_bps'] > cfg['paper_max_spread_bps']:
                 raise ValueError('Spread limit')
             margin = sum(p['initial_margin'] for p in self.positions.values())
-            if margin+cfg['paper_margin'] > cfg['paper_max_margin']:
-                raise ValueError('Margin limit')
             exposure = sum(abs(p['amount'])*p['mark'] for p in self.positions.values())
             maximum = min(cfg['max_notional']-exposure,
                 liquidity['ask_depth' if side>0 else 'bid_depth']*cfg['paper_depth_participation'])
             maximum,_ = cap_notional(self.ranker.return_snapshot(now//1000000),self.positions,
                 symbol,side,maximum,cfg['paper_max_margin']*cfg['paper_risk_fraction'],
                 now//1000000,cfg['horizon_seconds'])
-            atr = row['meta']['atr_proxy']
-            volatility = {'atr':atr*row['price'],'stop_pct':max(.0008,1.5*atr),
-                          'take_pct':max(.0026,3*atr),'regime':'microstructure'}
-            cost = 2*(cfg['fee_rate']+cfg['paper_slippage'])+liquidity['spread_bps']/10000
-            if max(.0008,1.5*atr)*2 <= cost*1.5:
-                raise ValueError('Cost gate')
-            minimum,maximum_leverage = leverage_bounds(cfg,symbol)
-            plan = size_risk_plan(volatility,cfg['paper_margin'],cfg['fee_rate'],
-                cfg['paper_slippage']+liquidity['spread_bps']/20000,minimum,
-                maximum_leverage,cfg['paper_risk_fraction'],cfg['paper_maintenance_rate'],
-                cfg['paper_risk_buffer'],maximum,
-                cfg['paper_max_margin']*cfg['paper_risk_fraction']-sum(p['plan']['planned_risk_usdt'] for p in self.positions.values()))
+            plan = microstructure_plan(row,liquidity,cfg,self.positions,maximum)
+            if margin+plan['margin'] > cfg['paper_max_margin']:
+                raise ValueError('Margin limit')
             equity = self.cash+sum((p['mark']-p['entry'])*p['amount'] for p in self.positions.values())
             if equity-margin < plan['notional']/plan['leverage']+plan['notional']*.002:
                 raise ValueError('Available collateral')

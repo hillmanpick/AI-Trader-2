@@ -112,7 +112,7 @@ def compact(report):
 
 
 def passes(report):
-    return (report['trades'] >= 30 and report['net_pnl'] > 0
+    return (report.get('valid',True) and report['trades'] >= 30 and report['net_pnl'] > 0
             and (report['profit_factor'] or 0) >= 1.1 and report['max_drawdown'] <= 3000)
 
 
@@ -149,6 +149,19 @@ def train(cfg, gradient=False):
     end_research = validation_start
     span = end_research-start
     folds, final_model = [],None
+    execution_policy = current_policy(cfg.horizon_seconds)
+    def quote_replay(model, start_ms, end_ms, threshold, stress=False):
+        candidate = model | {'threshold':threshold}
+        candidate['version'] = model_version(candidate)
+        policy = dict(execution_policy)
+        if stress:
+            policy['paper_slippage'] *= 2
+        from .lab_model import decide
+        def direction(row):
+            action = decide(candidate,row)['action']
+            return 1 if action=='long' else -1 if action=='short' else 0
+        return replay(store.market_rows(start_ms,end_ms),(),signal_fn=direction,policy=policy,
+                      horizon_ms=cfg.horizon_seconds*1000,latency_ms=1500 if stress else 500)
     for train_fraction,val_fraction,test_fraction in ((.4,.55,.7),(.55,.7,.85),(.7,.85,1.)):
         tr,va,te = partition(research,start+span*train_fraction,start+span*val_fraction,start+span*test_fraction)
         if min(len(tr),len(va),len(te)) < 100:
@@ -157,11 +170,11 @@ def train(cfg, gradient=False):
         # Select threshold using validation only; test never chooses parameters.
         options = []
         for threshold in (.45,.5,.55,.6,.65,.7):
-            r = replay(va,predictions(model,va,threshold),horizon_ms=cfg.horizon_seconds*1000)
+            r = quote_replay(model,int(start+span*train_fraction),int(start+span*val_fraction),threshold)
             options.append((r['net_pnl'] if r['trades'] >= 30 else -1e99,threshold,r))
         _,threshold,validation = max(options,key=lambda x:x[0])
-        test = replay(te,predictions(model,te,threshold),horizon_ms=cfg.horizon_seconds*1000)
-        stress = replay(te,predictions(model,te,threshold),slippage=.0006,latency_ms=1500,horizon_ms=cfg.horizon_seconds*1000)
+        test = quote_replay(model,int(start+span*val_fraction),int(start+span*test_fraction),threshold)
+        stress = quote_replay(model,int(start+span*val_fraction),int(start+span*test_fraction),threshold,True)
         folds.append({'train_samples':len(tr),'validation_samples':len(va),'test_samples':len(te),
                       'train_end_ms':max(r['label_end'] for r in tr),'test_start_ms':te[0]['ts'],
                       'threshold':threshold,'validation':compact(validation),'test':compact(test),'stress':compact(stress)})
@@ -191,6 +204,8 @@ def train(cfg, gradient=False):
               'gradient':{'enabled':False},'training_stride_seconds':30,
               'label_schema':LABEL_SCHEMA,'execution_validation':proof,
               'replay_limits':'sampled folds are preliminary; final model requires separate individual-event holdouts'}
+    report['execution_quotes'] = 'all causal quality samples, not filtered by future label availability'
+    report['policy'] = execution_policy
     if gradient:
         from sklearn.ensemble import HistGradientBoostingClassifier
         from sklearn.metrics import balanced_accuracy_score

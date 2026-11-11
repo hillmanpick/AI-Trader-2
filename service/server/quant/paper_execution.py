@@ -24,6 +24,14 @@ class PaperExecution:
                                      fee_rate=engine.cfg.fee_rate,
                                      participation=engine.cfg.paper_depth_participation,on_fill=self.apply_fill,
                                      slippage=engine.cfg.paper_slippage)
+        self.reflection_synced = False
+
+    def sync_reflection(self):
+        from .paper_performance import paper_performance
+        result = paper_performance(self.engine.store, include_trades=True)
+        if result is not None:
+            self.engine.reflection.sync_completed(result['completed_positions'])
+        self.reflection_synced = True
         # An interrupted paper intent is known virtual state; recover it through
         # fresh depth rather than submit a second exchange or simulated order.
 
@@ -147,6 +155,8 @@ class PaperExecution:
             c.execute('INSERT INTO paper_notifications VALUES (?,?,?)',(order['id'],event_id,payload))
 
     def tick(self):
+        if not self.reflection_synced:
+            self.sync_reflection()
         orders = self.journal.orders(active=True)
         if not orders:
             return
@@ -169,12 +179,4 @@ class PaperExecution:
                 self.engine.store.order_result(order['id'],order['state'],{
                     'executedQty':order['filled'],'quoteQty':order['notional'],'execution':'paper_depth_ioc'})
         self.engine.store.set('execution_statistics',self.journal.statistics())
-        seen = set(self.engine.store.get('reflection:execution_processed',[]))
-        for closed in self.engine.store.get('execution_closed_fills',[]):
-            if closed['fill_id'] not in seen:
-                self.engine.reflection.record_closed(closed | {
-                    'exit_reason':closed['reason'],'cost_usdt':closed['entry_fee']+closed['fee'],
-                    'net_pnl':closed['gross_pnl']-closed['entry_fee']-closed['fee']})
-                seen.add(closed['fill_id'])
-        recent_ids = [t['fill_id'] for t in self.engine.store.get('execution_closed_fills',[]) if t['fill_id'] in seen]
-        self.engine.store.set('reflection:execution_processed',recent_ids[-1000:])
+        self.sync_reflection()

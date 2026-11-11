@@ -60,10 +60,15 @@ class Engine:
             correlation = None
             if self.cfg.strategy == 'lab_model':
                 row = self.lab_row(symbol)
-                atr = row['meta']['atr_proxy']
-                override = {'atr':atr*price,'stop_pct':max(.0008,1.5*atr),
-                            'take_pct':max(.0026,3*atr),'regime':'microstructure'}
                 cap,correlation = self.lab_risk_cap(symbol,1 if action=='long' else -1,cap)
+                from .execution_policy import policy_for_settings, microstructure_plan
+                parameters = None
+                if self.cfg.paper_ai_autopilot:
+                    parameters = self.store.get('entry_context:'+symbol,{}).get('ai_parameters')
+                    if not parameters:
+                        raise ValueError('Missing fresh DS entry parameters')
+                return microstructure_plan(row,liquidity,policy_for_settings(self.cfg),positions,
+                                           cap,parameters) | {'liquidity':liquidity,'correlation_risk':correlation}
             min_leverage = self.cfg.paper_min_leverage
             max_leverage = (self.cfg.paper_major_max_leverage
                             if symbol in {'BTCUSDT','ETHUSDT'} else self.cfg.paper_max_leverage)
@@ -72,17 +77,6 @@ class Engine:
                 # 2,000 USDT is a budget ceiling for exploration. Shallow books
                 # must reduce the virtual order instead of inventing liquidity.
                 margin = min(margin, cap/min_leverage)
-            if self.cfg.paper_ai_autopilot:
-                parameters = self.store.get('entry_context:'+symbol,{}).get('ai_parameters')
-                if not parameters:
-                    raise ValueError('Missing fresh DS entry parameters')
-                margin = min(margin,float(parameters['margin_usdt']))
-                max_leverage = min(max_leverage,int(parameters['leverage']))
-                override = {'atr':atr*price,'stop_pct':float(parameters['stop_loss_pct']),
-                            'take_pct':float(parameters['take_profit_pct']),'regime':'ds_autopilot'}
-                cost = 2*(self.cfg.fee_rate+self.cfg.paper_slippage)+liquidity['spread_bps']/10000
-                if override['take_pct']<=cost*1.5:
-                    raise ValueError('DS target does not cover trading costs')
             return dynamic_leverage_plan(
                 bars, price, margin, self.cfg.fee_rate,
                 self.cfg.paper_slippage+liquidity['spread_bps']/20000, min_leverage,
@@ -451,7 +445,7 @@ class Engine:
             if exposure+order_notional > self.cfg.max_notional:
                 return
             if self.cfg.mode == 'paper' and self.cfg.paper_max_margin:
-                if sum(paper_margin_used(p) for p in positions.values())+self.cfg.paper_margin > self.cfg.paper_max_margin:
+                if sum(paper_margin_used(p) for p in positions.values())+order_notional/position_leverage > self.cfg.paper_max_margin:
                     return
             required = order_notional/position_leverage + order_notional*0.002
             if float(account.get('available',0)) < required:

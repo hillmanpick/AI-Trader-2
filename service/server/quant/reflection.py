@@ -184,3 +184,44 @@ class StrategyReflector:
             'enabled': bool(self.cfg.reflection_enabled),
             'active': self.active(), 'report': self._report([]),
         })
+
+    def sync_completed(self, trades):
+        """Refresh from complete durable position cycles, never depth-fill shards.
+
+        Rebuild once on migration without promoting rules from legacy fill counts.
+        Thereafter evaluate only after new complete cycles have accumulated.
+        """
+        if not self.cfg.reflection_enabled or self.cfg.mode != 'paper':
+            return self.status()
+        cursor = {'count':len(trades),'last':trades[-1]['cycle_id'] if trades else None}
+        if self.store.get('reflection:cycle_cursor') == cursor:
+            return self.status()
+        migrating = self.store.get('reflection:cycle_cursor') is None
+        active = self.active()
+        if migrating and active.get('overrides',{}).get('blocked_until'):
+            overrides = dict(active['overrides'])
+            overrides.pop('blocked_until',None)
+            active = active | {'version':int(active.get('version',1))+1,'overrides':overrides,
+                'reason':'按完整持仓周期重建反思；移除旧部分成交计数产生的币种冷却'}
+            self.store.set('reflection:active',active)
+        report = self._report(trades[-self.cfg.reflection_window:])
+        candidate = None
+        last = self.store.get('reflection:last_cycle_evaluated',len(trades))
+        if not migrating and len(trades)-last>=self.cfg.reflection_interval_trades:
+            candidate = self._candidate(report,active)
+            self.store.set('reflection:last_cycle_evaluated',len(trades))
+        elif migrating:
+            self.store.set('reflection:last_cycle_evaluated',len(trades))
+            self.store.event('反思统计修正','已从持久化成交账本按完整开平仓重建；不把部分成交当成独立交易')
+        if candidate:
+            active = candidate
+            self.store.set('reflection:active',candidate)
+            self.store.event('策略反思',candidate['reason'])
+        self.store.set('reflection:trades',trades[-max(self.cfg.reflection_window*4,200):])
+        self.store.set('reflection:trade_count',len(trades))
+        self.store.set('reflection:cycle_cursor',cursor)
+        status = {'enabled':True,'active':active,'report':report,
+                  'last_trade':trades[-1] if trades else None,'candidate':candidate,
+                  'counting_basis':'completed_position_cycles_v2'}
+        self.store.set('reflection:status',status)
+        return status

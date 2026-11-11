@@ -45,7 +45,7 @@ def register_quant_routes(app):
         except Exception:
             state,redis_ok,ranking = {},False,{}
         try:
-            history = LabStore(lab.directory).stats()
+            history = LabStore(lab.directory).stats(cache_seconds=60)
         except Exception:
             history = {'samples':0,'days':0,'error':'Historical store unavailable'}
         now = int(datetime.now(timezone.utc).timestamp()*1000)

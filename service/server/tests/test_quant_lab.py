@@ -154,7 +154,9 @@ def test_replay_flat_price_loses_costs_partial_fill_and_delay():
         r['meta']['ask_depth'] = r['meta']['bid_depth'] = 300000
     result = replay(rows,[1]*len(rows),horizon_ms=30000)
     assert result['trades'] > 0 and result['net_pnl'] < 0 and result['fees'] > 0
-    assert result['partial_fills'] > 0
+    # The shared planner sizes down before submission, rather than submitting
+    # an oversized order and calling the predictable truncation a partial fill.
+    assert all(t['margin']*t['leverage'] <= 15000 for t in result['fills'])
     assert all(t['at'] > 0 for t in result['fills'])
     blocked = replay(rows,[1]*len(rows),latency_ms=9999999)
     assert blocked['trades'] == 0
