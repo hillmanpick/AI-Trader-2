@@ -441,6 +441,24 @@ def test_candidate_rotation_rebases_feature_trade_cursor_without_calling_it_a_ga
     asyncio.run(check())
 
 
+def test_candidate_rotation_keeps_depth_subscription_during_label_grace(tmp_path):
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    collector = Collector(LabConfig(directory=str(tmp_path), horizon_seconds=300))
+    collector.selected = ('BTCUSDT', 'ETHUSDT')
+    first = collector.depth_subscription_symbols(('BTCUSDT', 'ETHUSDT'), 100000)
+    assert set(first) == {'BTCUSDT', 'ETHUSDT'}
+    second = collector.depth_subscription_symbols(('BTCUSDT', 'SOLUSDT'), 101000)
+    assert set(second) == {'BTCUSDT', 'ETHUSDT', 'SOLUSDT'}
+    collector.selected = ('BTCUSDT', 'SOLUSDT')
+    # A held position remains subscribed after the grace window.
+    third = collector.depth_subscription_symbols(('BTCUSDT', 'SOLUSDT'), 500001,
+                                                  held=('ETHUSDT',))
+    assert set(third) == {'BTCUSDT', 'ETHUSDT', 'SOLUSDT'}
+    fourth = collector.depth_subscription_symbols(('BTCUSDT', 'SOLUSDT'), 500001)
+    assert set(fourth) == {'BTCUSDT', 'SOLUSDT'}
+
+
 def test_parquet_trade_archive_tracks_candidates_and_label_grace(tmp_path):
     import asyncio
     import time

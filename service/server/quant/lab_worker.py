@@ -65,6 +65,13 @@ class Collector:
         self.trade_shards = {}
         self.trade_tasks = []
         self.trade_symbols = ()
+        # Depth subscriptions are changed in-place. Removed candidates remain
+        # subscribed for one label/position horizon so a rotating pool does not
+        # manufacture a feed disconnect in an otherwise continuous replay.
+        self.depth_symbols = ()
+        self.depth_grace_until = {}
+        self.depth_update_event = None
+        self.stream_command_id = 0
         self.repair_gate = asyncio.Semaphore(2)
         self.repair_lock = asyncio.Lock()
         self.last_repair_call = 0.
@@ -115,6 +122,28 @@ class Collector:
     def archives_trade(self, symbol, now_ms=None):
         now_ms = int(time.time() * 1000) if now_ms is None else int(now_ms)
         return symbol in self.selected or now_ms <= self.trade_archive_until.get(symbol, 0)
+
+    def depth_subscription_symbols(self, selected, now_ms, held=()):
+        selected = set(selected)
+        held = set(held)
+        grace_ms = self.cfg.horizon_seconds * 1000 + 45000
+        for symbol in set(self.selected) - selected:
+            self.depth_grace_until[symbol] = max(
+                self.depth_grace_until.get(symbol, 0), int(now_ms) + grace_ms)
+        for symbol in selected | held:
+            self.depth_grace_until.pop(symbol, None)
+        for symbol, expiry in list(self.depth_grace_until.items()):
+            if expiry <= now_ms:
+                self.depth_grace_until.pop(symbol, None)
+        return tuple(sorted(selected | held | set(self.depth_grace_until)))
+
+    def request_depth_subscriptions(self, symbols):
+        symbols = tuple(sorted(set(symbols)))
+        if symbols == self.depth_symbols:
+            return
+        self.depth_symbols = symbols
+        if self.depth_update_event:
+            self.depth_update_event.set()
 
     async def record_event(self,data,source='websocket',received_ns=None):
         # bookTicker is a redundant best-quote projection of the depth feed.
@@ -233,6 +262,25 @@ class Collector:
                 # Redis failure must not kill source ingestion or replace the
                 # reconnect path; cached execution depth also expires in 3s.
                 self.errors += 1
+
+    async def drop_depth_feed(self, symbols):
+        """Remove an expired subscription without recording a feed disconnect."""
+        symbols = tuple(symbols)
+        tasks = {s:self.snapshot_tasks[s] for s in symbols if s in self.snapshot_tasks}
+        for task in tasks.values():
+            task.cancel()
+        await asyncio.gather(*tasks.values(),return_exceptions=True)
+        for symbol,task in tasks.items():
+            if self.snapshot_tasks.get(symbol) is task:
+                self.snapshot_tasks.pop(symbol,None)
+        for symbol in symbols:
+            self.books.pop(symbol,None)
+            self.buffers.pop(symbol,None)
+        try:
+            await asyncio.to_thread(self.bus.client.delete,
+                *(f'quant:lab:{kind}:{s}' for s in symbols for kind in ('book','liquidity')))
+        except Exception:
+            self.errors += 1
 
     async def accept_depth(self, event, received_ns):
         symbol, now = event['s'],received_ns//1000000
@@ -383,6 +431,8 @@ class Collector:
             delay = min(30,delay*2)
 
     async def micro(self,symbols):
+        self.depth_update_event = asyncio.Event()
+        self.request_depth_subscriptions(symbols)
         tasks = [asyncio.create_task(self.public_stream(symbols))]
         if not self.cfg.all_market_trades:
             tasks.append(asyncio.create_task(self.trade_stream(symbols)))
@@ -397,11 +447,38 @@ class Collector:
         delay = 1
         while True:
             try:
-                streams = '/'.join(f'{s.lower()}@{kind}' for s in symbols for kind in ('bookTicker','depth@100ms'))
+                initial = tuple(self.depth_symbols or symbols)
+                streams = '/'.join(f'{s.lower()}@{kind}' for s in initial for kind in ('bookTicker','depth@100ms'))
                 async with self.session.ws_connect('wss://fstream.binance.com/public/stream?streams='+streams,heartbeat=20) as ws:
-                    await self.reset_depth_feed(symbols,'connected')
+                    subscribed = set(initial)
+                    await self.reset_depth_feed(subscribed,'connected')
                     while True:
-                        frame = await asyncio.wait_for(ws.receive(),timeout=15)
+                        # Binance supports SUBSCRIBE/UNSUBSCRIBE on the same
+                        # public socket. Rotation therefore does not reset all
+                        # books and does not create artificial replay gaps.
+                        if self.depth_update_event and self.depth_update_event.is_set():
+                            self.depth_update_event.clear()
+                            desired = set(self.depth_symbols)
+                            added, removed = desired-subscribed, subscribed-desired
+                            if added:
+                                self.stream_command_id += 1
+                                await ws.send_json({'method':'SUBSCRIBE','params':[
+                                    f'{s.lower()}@{kind}' for s in sorted(added)
+                                    for kind in ('bookTicker','depth@100ms')],
+                                    'id':self.stream_command_id})
+                                await self.reset_depth_feed(added,'connected')
+                            if removed:
+                                self.stream_command_id += 1
+                                await ws.send_json({'method':'UNSUBSCRIBE','params':[
+                                    f'{s.lower()}@{kind}' for s in sorted(removed)
+                                    for kind in ('bookTicker','depth@100ms')],
+                                    'id':self.stream_command_id})
+                                await self.drop_depth_feed(removed)
+                            subscribed = desired
+                        try:
+                            frame = await asyncio.wait_for(ws.receive(),timeout=1)
+                        except asyncio.TimeoutError:
+                            continue
                         if frame.type != aiohttp.WSMsgType.TEXT:
                             raise ConnectionError('Microstructure connection closed')
                         payload = json.loads(frame.data)
@@ -409,7 +486,7 @@ class Collector:
                         received_ns = time.time_ns()
                         now = received_ns//1000000
                         s = event.get('s')
-                        if s not in symbols:
+                        if s not in subscribed:
                             continue
                         self.record(event)
                         kind = event.get('e')
@@ -424,12 +501,12 @@ class Collector:
                             self.quote_count = getattr(self,'quote_count',0)+1
                         delay = 1
             except asyncio.CancelledError:
-                await self.reset_depth_feed(symbols,'disconnected')
+                await self.reset_depth_feed(self.depth_symbols or symbols,'disconnected')
                 raise
             except Exception as exc:
                 logging.warning('Microstructure stream: %s',type(exc).__name__)
                 self.reconnects += 1
-                await self.reset_depth_feed(symbols,'disconnected')
+                await self.reset_depth_feed(self.depth_symbols or symbols,'disconnected')
             await asyncio.sleep(delay)
             delay = min(30,delay*2)
 
@@ -571,20 +648,20 @@ class Collector:
                 from pathlib import Path
                 from .store import Store
                 paper_path = Path(os.getenv('QUANT_PAPER_DB_PATH','/data/quant-aggressive-paper.db'))
+                held = ()
                 if paper_path.exists():
                     held = tuple(Store(str(paper_path)).get('positions',{}))
                     selected = tuple(dict.fromkeys(selected+held))
+                now_ms = int(time.time()*1000)
                 if selected != self.selected:
+                    self.prepare_selected(selected,now_ms)
+                desired_depth = self.depth_subscription_symbols(selected,now_ms,held)
+                self.selected = selected
+                if desired_depth != self.depth_symbols:
                     if getattr(self,'micro_task',None):
-                        self.micro_task.cancel()
-                        await asyncio.gather(self.micro_task,return_exceptions=True)
-                    for task in list(self.snapshot_tasks.values()):
-                        task.cancel()
-                    await asyncio.gather(*list(self.snapshot_tasks.values()),return_exceptions=True)
-                    self.prepare_selected(selected,int(time.time()*1000))
-                    self.selected = selected
-                    if selected:
-                        self.micro_task = asyncio.create_task(self.micro(selected))
+                        self.request_depth_subscriptions(desired_depth)
+                    elif selected:
+                        self.micro_task = asyncio.create_task(self.micro(desired_depth))
                 # Refresh the heartbeat even when ranking has not changed;
                 # otherwise a stable pool would expire and block all entries.
                 await asyncio.to_thread(self.bus.put,'candidates',{'symbols':list(selected),'ts':int(time.time()*1000)},700)
