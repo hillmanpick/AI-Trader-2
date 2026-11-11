@@ -121,6 +121,24 @@ def test_readiness_distinguishes_administrative_pause_data_and_failed_strategy(t
     assert {'paper_disabled','operator_paused','collector_stale','redis_unavailable'}<=codes
 
 
+def test_forward_trial_readiness_preserves_failed_validation_as_warning(tmp_path):
+    from dataclasses import replace
+    from quant.lab_config import LabConfig
+    from quant.opening_readiness import paper_readiness
+    paper=Settings(enabled=True,strategy='lab_model',paper_lab_required=True,paper_exploration_mode=True)
+    lab=LabConfig(enabled=True,directory=str(tmp_path),exploration_mode=True)
+    model={'ready':True,'approved':False,'exploration':True,'version':'trial'}
+    state={'ts':100000,'ready_symbols':['BTCUSDT']}
+    result=paper_readiness(paper,lab,model,{'status':'rejected'},state,True,False,100001)
+    assert result['entry_ready'] and result['mode']=='forward_trial'
+    assert not result['validated_entry_ready'] and not result['automatic_after_validation']
+    assert result['validation_warnings'][0]['code']=='model_unvalidated'
+    assert not paper_readiness(paper,lab,model,{},state,True,True,100001)['entry_ready']
+    assert not paper_readiness(paper,lab,model,{},state,False,False,100001)['entry_ready']
+    blocked=paper_readiness(replace(paper,paper_exploration_mode=False),lab,model,{},state,True,False,100001)
+    assert not blocked['entry_ready'] and blocked['blockers'][0]['code']=='trial_not_authorized'
+
+
 def test_bounded_training_score_cache_matches_uncached_decisions_for_all_thresholds():
     from quant.lab_train import SampledModelSignals
     from quant.lab_model import decide

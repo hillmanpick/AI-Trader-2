@@ -50,7 +50,8 @@ class PaperExecution:
         context = e.store.get('entry_context:'+symbol,{})
         e.store.intent(oid,symbol,{'amount':amount,'price':price,'reason':reason,'execution':'paper_depth_ioc'})
         self.broker.submit(oid,symbol,1 if amount>0 else -1,abs(amount),at,reduce_only=closing,
-                           metadata={'paper_context':context,'reason':reason,'closing':closing})
+                           metadata={'paper_context':context,'reason':reason,'closing':closing},
+                           max_quote=None if closing else context.get('entry_profile',{}).get('notional'))
         return oid
 
     def apply_fill(self,c,fill,order):

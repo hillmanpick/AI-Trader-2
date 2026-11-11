@@ -143,7 +143,7 @@ class ModelEventReplay(HistoricalBookReplay):
                     or quantity*row['price']<float(filters.get('MIN_NOTIONAL',{}).get('notional',0))):
                 raise ValueError('Exchange quantity filter')
             identity = f"entry:{symbol}:{now}"
-            self.broker.submit(identity,symbol,side,quantity,now,metadata={'plan':plan})
+            self.broker.submit(identity,symbol,side,quantity,now,metadata={'plan':plan},max_quote=plan['notional'])
             self.pending[symbol] = identity
         except (KeyError,ValueError):
             self.rejected += 1

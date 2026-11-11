@@ -11,7 +11,7 @@ import sqlite3
 import time
 import threading
 from contextlib import contextmanager
-from decimal import Decimal
+from decimal import Decimal, localcontext, ROUND_DOWN
 
 TERMINAL = {'FILLED','CANCELED','REJECTED','EXPIRED'}
 TRANSITIONS = {
@@ -107,6 +107,8 @@ class OrderJournal:
 
     def create(self,order):
         request = {k:order[k] for k in ('id','symbol','side','quantity','type','limit_price','tif','reduce_only')}
+        if order.get('max_quote') is not None:
+            request['max_quote'] = order['max_quote']
         fingerprint = hashlib.sha256(json.dumps(request,sort_keys=True).encode()).hexdigest()
         with self.connect() as c:
             old = c.execute('SELECT fingerprint,body FROM execution_orders WHERE id=?',(order['id'],)).fetchone()
@@ -167,7 +169,7 @@ class OrderJournal:
             if not c.in_transaction:
                 c.execute('BEGIN IMMEDIATE')
             order = json.loads(c.execute('SELECT body FROM execution_orders WHERE id=?',(identity,)).fetchone()[0])
-            if any(k in values for k in ('id','state','filled','quantity','notional','submitted_ns','updated_ns')):
+            if any(k in values for k in ('id','state','filled','quantity','notional','submitted_ns','updated_ns','max_quote')):
                 raise ValueError('Execution invariants cannot be changed by metadata')
             order.update(values)
             c.execute('UPDATE execution_orders SET body=? WHERE id=?',(json.dumps(order,allow_nan=False),identity))
@@ -206,16 +208,20 @@ class SimulatedBroker:
         return json.dumps({'consumed':[[*key,str(qty)] for key,qty in sorted(self.consumed.items())],
                            'last_trade':self.last_trade},sort_keys=True,allow_nan=False)
 
-    def submit(self,identity,symbol,side,quantity,at_ns,order_type='MARKET',limit_price=None,tif='IOC',reduce_only=False,metadata=None):
+    def submit(self,identity,symbol,side,quantity,at_ns,order_type='MARKET',limit_price=None,tif='IOC',reduce_only=False,metadata=None,max_quote=None):
         if side not in (-1,1) or number(quantity)<=0 or order_type not in ('MARKET','LIMIT') or tif not in ('IOC','GTC'):
             raise ValueError('Invalid simulated order')
         if order_type=='LIMIT' and (limit_price is None or number(limit_price)<=0):
             raise ValueError('A limit order requires a positive price')
+        if max_quote is not None and number(max_quote)<=0:
+            raise ValueError('Quote budget must be positive')
         order = {'id':identity,'symbol':symbol,'side':side,'quantity':str(number(quantity)),
                  'filled':'0','notional':'0','type':order_type,'limit_price':str(number(limit_price)) if limit_price is not None else None,
                  'tif':tif,'reduce_only':bool(reduce_only),'submitted_ns':int(at_ns),'updated_ns':int(at_ns),
                  'ack_due_ns':int(at_ns)+self.ack_ns,'ack_ns':None,'first_fill_ns':None,'state':'SUBMITTED',
                  'queue_ahead':None,'cancel_requested_ns':None,'cancel_due_ns':None}
+        if max_quote is not None:
+            order['max_quote'] = str(number(max_quote))
         if metadata:
             if any(k in order for k in metadata):
                 raise ValueError('Metadata cannot override order execution fields')
@@ -235,6 +241,14 @@ class SimulatedBroker:
         qty,price = number(qty),number(price)
         remaining = number(order['quantity'])-number(order['filled'])
         qty = min(qty,remaining)
+        if order.get('max_quote') is not None:
+            # Include actual spread, price impact and adverse slippage in the
+            # budget. Decimal floor avoids an over-budget fractional fill.
+            with localcontext() as context:
+                context.rounding = ROUND_DOWN
+                affordable = (max(number(0),number(order['max_quote'])-number(order['notional']))/price).quantize(
+                    Decimal('0.000000000001'),rounding=ROUND_DOWN)
+                qty = min(qty,affordable)
         if qty<=0:
             return order
         filled = number(order['filled'])+qty
@@ -315,8 +329,9 @@ class SimulatedBroker:
                         fill_price = p*(1+order['side']*self.slippage)
                         if limit is not None and (fill_price>limit if order['side']>0 else fill_price<limit):
                             break
+                        before = number(order['filled'])
                         order = self.fill(order,qty,fill_price,at_ns,f'depth:{book.last}:{price}')
-                        self.consumed[key] = self.consumed.get(key,number(0))+qty
+                        self.consumed[key] = self.consumed.get(key,number(0))+number(order['filled'])-before
                     if order['state']=='FILLED':
                         break
                 if order['state']=='FILLED':
@@ -343,8 +358,9 @@ class SimulatedBroker:
                     order['queue_ahead'] = str(ahead)
                     if trade_remaining>0:
                         qty = min(trade_remaining,number(order['quantity'])-number(order['filled']))
+                        before = number(order['filled'])
                         order = self.fill(order,qty,limit,at_ns,f"trade:{trade['t']}")
-                        trade_remaining -= qty
+                        trade_remaining -= number(order['filled'])-before
                     else:
                         with self.journal.connect() as c:
                             c.execute('UPDATE execution_orders SET body=? WHERE id=?',(json.dumps(order),order['id']))

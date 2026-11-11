@@ -50,9 +50,12 @@ def register_quant_routes(app):
             history = {'samples':0,'days':0,'error':'Historical store unavailable'}
         now = int(datetime.now(timezone.utc).timestamp()*1000)
         from quant.opening_readiness import latest_report, paper_readiness
+        from quant.paper_trial import forward_trial_status
         paper = paper_settings(cfg)
+        paper_db = Store(paper.db_path)
         opening = paper_readiness(paper,lab,model,latest_report(lab.directory),state,redis_ok,
-                                  Store(paper.db_path).get('paused',False),now)
+                                  paper_db.get('paused',False),now)
+        opening['forward_trial'] = forward_trial_status(paper_db)
         try:
             from quant.event_lake import EventLake
             lake = EventLake(lab.directory, int(lab.event_max_gb * 1024**3), lab.retention_days * 24)

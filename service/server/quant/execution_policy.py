@@ -10,7 +10,7 @@ def policy_for_settings(cfg, horizon_seconds=300):
         'paper_major_max_leverage',
         'paper_depth_participation','paper_depth_range_bps','paper_max_spread_bps',
         'max_positions','max_notional','paper_exploration_mode')} | {'horizon_seconds':horizon_seconds,
-            'entry_plan_schema':'shared-microstructure-v2',
+            'entry_plan_schema':'shared-microstructure-v3-quote-budget',
             'major_symbol_max_leverage':cfg.paper_major_max_leverage,
             'major_symbols':['BTCUSDT','ETHUSDT']}
 

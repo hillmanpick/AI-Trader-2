@@ -70,7 +70,8 @@ def model_status(cfg, now=None):
             exploratory['version'] = model_version(exploratory)
             exploratory['exploration'] = True
             return {'ready':True,'approved':False,'exploration':True,
-                    'reason':'探索模拟：模型尚未通过样本外验证，仅允许虚拟订单',
+                    'reason':'原模拟盘前向试验：模型尚未通过样本外验证，仅允许虚拟订单',
+                    'validation_reason':model.get('execution_validation',{}).get('reason'),
                     'version':exploratory['version'],'artifact_version':model['version'],'trained_ms':model['trained_ms'],
                     'threshold':exploratory['threshold'],'test':model.get('test',{})}, exploratory
         execution_validation = model.get('execution_validation',{})

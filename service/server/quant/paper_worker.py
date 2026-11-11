@@ -34,6 +34,8 @@ def main():
         engine.lab_risk_cap = lab.risk_cap
         from .paper_execution import PaperExecution
         engine.paper_execution = PaperExecution(engine,lab.bus)
+        from .paper_trial import sync_forward_trial
+        sync_forward_trial(store,cfg)
         lab.start_event_listener(market.market_stream.data_ready)
     notifier = Notifier(cfg, store)
     last_error = None

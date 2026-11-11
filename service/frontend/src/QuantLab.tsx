@@ -29,9 +29,11 @@ export function QuantLab() {
     {error && <p role="alert">{error}</p>}
     {!data ? <p>正在读取采集与模型状态…</p> : <>
       <p><strong>{data.enabled ? data.stale ? '采集心跳过期，禁止模型新仓' : '行情采集中' : '采集未启用'}</strong> · Redis {data.redis_connected ? '已连接' : '不可用'} · 全市场 USDT 永续 {num(c.universe_count, 0)} 个 · 候选 {c.candidates?.length || 0} / {req.candidate_limit} 个 · 特征就绪 {c.ready_symbols?.length || 0} 个</p>
-      {opening && <div role="status"><p><strong>模拟开仓：{opening.entry_ready ? '门槛已通过，等待方向信号' : opening.armed ? '已待命，等待验证或数据恢复' : '总开关关闭或已暂停'}</strong> · {opening.automatic_after_validation ? '通过验证后自动允许检查开仓，无需手动恢复' : '当前配置不会自动恢复已验证模拟交易'}</p>
+      {opening && <div role="status"><p><strong>模拟开仓：{opening.entry_ready ? opening.mode === 'forward_trial' ? '原模拟盘前向试验已启用，等待合格信号' : '门槛已通过，等待方向信号' : opening.armed ? '已待命，存在开仓阻碍' : '总开关关闭或已暂停'}</strong> · {opening.mode === 'forward_trial' ? '使用原账户和成交记录；模型验证状态独立保留' : opening.automatic_after_validation ? '通过验证后自动允许检查开仓，无需手动恢复' : '当前配置不会自动恢复已验证模拟交易'}</p>
         {opening.blockers?.length > 0 && <ul>{opening.blockers.map((b: any) => <li key={b.code}>{b.reason}</li>)}</ul>}
-        <p>门槛通过不代表立即成交；仍检查实时信号、成本、流动性和组合风险。</p></div>}
+        {opening.validation_warnings?.map((w: any) => <p key={w.code}>{w.reason}</p>)}
+        {opening.forward_trial && <p>本轮前向试验{opening.forward_trial.active ? '进行中' : '已结束'} · 开始 {beijingTime(opening.forward_trial.started_at)} · 已提交 {num(opening.forward_trial.submitted_orders, 0)} 笔订单 · 已成交开仓 {num(opening.forward_trial.filled_entry_orders, 0)} 笔 / 平仓 {num(opening.forward_trial.filled_exit_orders, 0)} 笔 · 成交明细 {num(opening.forward_trial.fill_count, 0)} 条 · 手续费 {num(opening.forward_trial.fees_usdt, 4)} U。统计直接读取原模拟账本。</p>}
+        <p>允许检查信号不代表已经成交；仍检查实时信号、成本、流动性和组合风险。</p></div>}
       <p>候选币：{c.candidates?.join('、') || '等待币安交易规则与成交额数据'}。币池每 5 分钟刷新；成交额、盘口深度、价差、数据质量和组合风险共同决定是否允许入场。</p>
       <p>距最近全市场行情 {num(c.ticker_age_ms, 0)} 毫秒 · 深度序号缺口 {num(c.depth_gaps, 0)} · 成交缺口 {num(c.trade_gaps, 0)} · 重连 {num(c.reconnects, 0)} · 原始记录丢弃 {num(c.raw_dropped, 0)}</p>
       {c.quote_pipeline && <p>连续报价覆盖 {c.observed_symbols?.length || 0} 个币 · 仅供退出观察 {c.exit_only_symbols?.length || 0} 个 · 订阅确认 {c.depth_subscriptions_confirmed?.length || 0} 个 · 等待确认 {num(c.depth_commands_pending, 0)} 条。特征预热期间仍记录有效报价；离池观察不能触发新仓。</p>}

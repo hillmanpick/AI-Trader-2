@@ -26,6 +26,29 @@ def book(now=0):
     return b
 
 
+@pytest.mark.parametrize('side',[1,-1])
+def test_quote_budget_caps_actual_depth_fills_including_slippage_and_restart(tmp_path,side):
+    from quant.execution_state import number
+    journal=OrderJournal(tmp_path/'budget.db')
+    broker=SimulatedBroker(journal,ack_ms=0,participation=1,slippage=.0003)
+    broker.submit('budget','BTCUSDT',side,10,0,max_quote=250)
+    broker.on_event(1000000,{'BTCUSDT':book(1)})
+    order=journal.get('budget')
+    assert order['state']=='EXPIRED' and 0<number(order['filled'])<10
+    assert number(order['notional'])<=250
+    assert sum(number(f['quantity'])*number(f['price']) for f in journal.fills())<=250
+    fills=journal.fills()
+    resumed=SimulatedBroker(journal,ack_ms=0,participation=1,slippage=.0003)
+    resumed.on_event(2000000,{'BTCUSDT':book(2)})
+    assert journal.fills()==fills
+    with pytest.raises(ValueError,match='different request'):
+        resumed.submit('budget','BTCUSDT',side,10,0,max_quote=251)
+    with pytest.raises(ValueError,match='invariants'):
+        journal.metadata('budget',{'max_quote':999})
+    with pytest.raises(ValueError,match='budget'):
+        resumed.submit('bad','BTCUSDT',side,10,0,max_quote=-1)
+
+
 def test_parquet_preserves_exact_trade_ids_decimal_strings_and_time_order(tmp_path):
     lake = EventLake(tmp_path)
     trade = event('trade',2000000000,t=123,p='0.0000012300',q='123456.123400',m=False,T=1999)
