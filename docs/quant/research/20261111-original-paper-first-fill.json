@@ -1,0 +1,240 @@
+{
+  "observed_ms": 1794394092217,
+  "scope": "original_paper_ledger",
+  "trial": {
+    "id": "528f690a47ec419e9fb2c3392d2763a1",
+    "active": true,
+    "started_ns": 1794393421956833555,
+    "started_at": "2026-11-11T10:37:01.956839+00:00",
+    "baseline_wallet": 979536.7083798334,
+    "baseline_fill_count": 4613,
+    "scope": "existing_paper_only",
+    "decision_source": "numeric_model",
+    "note": "未验证模型的前向试验；保留原余额和历史，不代表盈利验证通过",
+    "submitted_orders": 1,
+    "filled_entry_orders": 1,
+    "filled_exit_orders": 0,
+    "fill_count": 7,
+    "fees_usdt": 0.09852156116204999,
+    "last_fill": {
+      "id": "f04362583ea71efccca554627634c07526412dc036834ae3e6cd63d778ccf3b5",
+      "order_id": "qt_674afdc4cf3fe0433d3f5eed1b37",
+      "at_ns": 1794394086912345270,
+      "symbol": "ERAUSDT",
+      "side": -1,
+      "closing": false,
+      "quantity": 365.9,
+      "price": 0.085654296,
+      "fee": 0.0156704534532,
+      "leverage": 2,
+      "model_version": "75da3ca1534d265c42ca73f6"
+    },
+    "evidence": "execution_orders + execution_fills in the original paper ledger"
+  },
+  "total_fill_count": 4620,
+  "wallet": 979536.6098582722,
+  "positions": {
+    "ERAUSDT": {
+      "leverage": 2,
+      "stop_pct": 0.003139548140678585,
+      "take_pct": 0.00627909628135717,
+      "opened_at": "2026-11-11T10:48:06.625144+00:00",
+      "maintenance_rate": 0.005,
+      "dynamic_exits": true,
+      "exit_plan": {
+        "atr": 0.0001793728504374365,
+        "stop_pct": 0.003139548140678585,
+        "take_pct": 0.00627909628135717,
+        "regime": "microstructure",
+        "leverage": 2,
+        "margin": 98.71313,
+        "notional": 197.42626,
+        "risk_budget": 9.871313,
+        "estimated_stop_loss": 0.6198292475041269,
+        "estimated_round_trip_cost": 0.3619343276398555,
+        "risk_buffer": 0.001,
+        "planned_risk_usdt": 1.1791898351439825,
+        "liquidation_room_pct": 0.2475,
+        "sizing_method": "atr_stop_risk_budget",
+        "liquidity": {
+          "bid": 0.08573,
+          "ask": 0.08575,
+          "bid_qty": 2178.0,
+          "ask_qty": 97.0,
+          "mid": 0.08574000000000001,
+          "spread_bps": 2.3326335432710663,
+          "bid_depth": 3948.5252,
+          "ask_depth": 2833.36936,
+          "depth_bps": 10.0,
+          "imbalance": 0.164431314897942,
+          "depth_lower_bound": false,
+          "ofi_5s": -6.931842554987442,
+          "ofi_events": 46,
+          "ofi_ready": true,
+          "bid_coverage_bps": 1997.9006298110571,
+          "ask_coverage_bps": 4295.544669932352,
+          "updated_ms": 1794394085406,
+          "sequence": 12077957440198
+        },
+        "correlation_risk": {
+          "sigma_usdt": 1.4446488759216503,
+          "correlations": {
+            "ERAUSDT": {
+              "ERAUSDT": 1.0
+            }
+          },
+          "points": 60,
+          "method": "aligned EWMA covariance with diagonal shrinkage",
+          "horizon_seconds": 300
+        }
+      },
+      "model_version": "75da3ca1534d265c42ca73f6",
+      "exploration": true,
+      "model_approved": false,
+      "feature_ts": 1794394082809,
+      "strategy_version": 32,
+      "entry_regime": "microstructure",
+      "mae_pct": 0,
+      "mfe_pct": 0,
+      "amount": -2300.0,
+      "entry": 0.08567092274960869,
+      "mark": 0.085644299,
+      "pnl": 0,
+      "initial_margin": 98.52156116204999,
+      "entry_fee": 0.09852156116205,
+      "stop_price": 0.08593989073583745,
+      "take_price": 0.08513298677715118
+    }
+  },
+  "orders": [
+    {
+      "id": "qt_674afdc4cf3fe0433d3f5eed1b37",
+      "symbol": "ERAUSDT",
+      "side": -1,
+      "quantity": "2300.0",
+      "filled": "2300.000",
+      "notional": "197.043122324100",
+      "type": "MARKET",
+      "limit_price": null,
+      "tif": "IOC",
+      "reduce_only": false,
+      "submitted_ns": 1794394086625143655,
+      "updated_ns": 1794394086912345270,
+      "ack_due_ns": 1794394086645143655,
+      "ack_ns": 1794394086912345270,
+      "first_fill_ns": 1794394086912345270,
+      "state": "FILLED",
+      "queue_ahead": null,
+      "cancel_requested_ns": null,
+      "cancel_due_ns": null,
+      "max_quote": "197.42626",
+      "paper_context": {
+        "model_version": "75da3ca1534d265c42ca73f6",
+        "exploration": true,
+        "model_approved": false,
+        "confidence": 0.41096921993357904,
+        "feature_ts": 1794394082809,
+        "regime": "microstructure",
+        "strategy": "lab_model",
+        "entry_profile": {
+          "atr": 0.0001793728504374365,
+          "stop_pct": 0.003139548140678585,
+          "take_pct": 0.00627909628135717,
+          "regime": "microstructure",
+          "leverage": 2,
+          "margin": 98.71313,
+          "notional": 197.42626,
+          "risk_budget": 9.871313,
+          "estimated_stop_loss": 0.6198292475041269,
+          "estimated_round_trip_cost": 0.3619343276398555,
+          "risk_buffer": 0.001,
+          "planned_risk_usdt": 1.1791898351439825,
+          "liquidation_room_pct": 0.2475,
+          "sizing_method": "atr_stop_risk_budget",
+          "liquidity": {
+            "bid": 0.08573,
+            "ask": 0.08575,
+            "bid_qty": 2178.0,
+            "ask_qty": 97.0,
+            "mid": 0.08574000000000001,
+            "spread_bps": 2.3326335432710663,
+            "bid_depth": 3948.5252,
+            "ask_depth": 2833.36936,
+            "depth_bps": 10.0,
+            "imbalance": 0.164431314897942,
+            "depth_lower_bound": false,
+            "ofi_5s": -6.931842554987442,
+            "ofi_events": 46,
+            "ofi_ready": true,
+            "bid_coverage_bps": 1997.9006298110571,
+            "ask_coverage_bps": 4295.544669932352,
+            "updated_ms": 1794394085406,
+            "sequence": 12077957440198
+          },
+          "correlation_risk": {
+            "sigma_usdt": 1.4446488759216503,
+            "correlations": {
+              "ERAUSDT": {
+                "ERAUSDT": 1.0
+              }
+            },
+            "points": 60,
+            "method": "aligned EWMA covariance with diagonal shrinkage",
+            "horizon_seconds": 300
+          }
+        },
+        "leverage": 2,
+        "order_notional": 197.42626,
+        "initial_margin": 98.71313
+      },
+      "reason": "lab_model",
+      "closing": false
+    }
+  ],
+  "worker": {
+    "status": "running",
+    "error": null,
+    "heartbeat": "2026-11-11T10:48:06.686162+00:00",
+    "market_stream": {
+      "status": "connected",
+      "source": "Binance public WebSocket",
+      "reconnects": 2,
+      "updated_at": "2026-11-11T10:48:06.686347+00:00",
+      "symbols": [
+        "BTCUSDT",
+        "BCHUSDT",
+        "1000PEPEUSDT",
+        "ZECUSDT",
+        "DOTUSDT",
+        "HYPEUSDT",
+        "PAXGUSDT",
+        "1000SHIBUSDT",
+        "EDGEUSDT",
+        "TIAUSDT",
+        "ERAUSDT",
+        "FILUSDT"
+      ],
+      "fresh_marks": 12,
+      "rest_fallbacks": 27
+    }
+  },
+  "gate": {
+    "ready": true,
+    "approved": false,
+    "exploration": true,
+    "reason": "原模拟盘前向试验：模型尚未通过样本外验证，仅允许虚拟订单",
+    "validation_reason": "sampled_research_gate_failed",
+    "version": "75da3ca1534d265c42ca73f6",
+    "artifact_version": "fd11ff6e1852d1960d85a76c",
+    "trained_ms": 1794393365047,
+    "threshold": 0.4,
+    "test": {},
+    "at": "2026-11-11T10:48:06.669182+00:00"
+  },
+  "safety": {
+    "real_orders_enabled": false,
+    "ai_enabled": false,
+    "autopilot_enabled": false,
+    "paper_worker_credentials_absent": true
+  }
+}
