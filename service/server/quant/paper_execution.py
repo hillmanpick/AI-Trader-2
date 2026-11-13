@@ -125,6 +125,8 @@ class PaperExecution:
                         'entry_regime':context.get('regime','microstructure'),'mae_pct':0,'mfe_pct':0}
             if not old and context.get('shortline_version'):
                 p['shortline_version'] = context['shortline_version']
+            if not old and context.get('ds_authority'):
+                p['ds_authority'] = True
             if context.get('ai_parameters') and not old:
                 p['ds_hold_seconds'] = context['ai_parameters']['hold_seconds']
                 p['autopilot_request'] = context.get('autopilot_request')

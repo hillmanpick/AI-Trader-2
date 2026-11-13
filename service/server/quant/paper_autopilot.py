@@ -26,6 +26,11 @@ action 只能为 hold/long/short/close/update。long/short 必须给出正数保
 features 中 return_* 和 btc_return_60s 是对数收益；depth_imbalance/trade_imbalance/OFI 正数偏买方，负数偏卖方，不代表必涨跌；spread_bps 单位万分之一；ewma_volatility 是短期波动，volume_anomaly 是成交量相对基线；log_* 是 log1p；atr_proxy 是价格波动比例估计。
 current 是即时数据，positions 是本模拟账本持仓，feedback 是本模拟盘扣费后反馈。综合短期趋势、订单流、市场环境和成本，不追求强行增加交易，不承诺收益。reason 不超过 80 字，summary 不超过 120 字。'''
 
+DIRECT_SYSTEM = SYSTEM.replace(
+    '新开多仓只能选择 long_score >= 20 且高于 short_score 的合约；新开空仓只能选择 short_score >= 20 且高于 long_score 的合约。缺少新鲜 potential 时不要新开仓；已有仓位仍须逐轮判断退出。',
+    '你拥有候选合约范围内的最终交易决策权。potential 是可选参考，缺失或评分方向冲突不构成程序否决；可根据现有真实数据独立选择做多、做空或观望，不能编造缺失数据。程序不以趋势、订单流方向、置信度阈值、双样本确认或收益成本比再次审核你的方向。'
+) + '\n你的止损、止盈和持仓期限由程序执行，程序不额外自动移动止损或保本平仓；你可用 update 收紧止损和调整止盈、期限。复投与硬性资金、流动性和风险上限继续有效。'
+
 
 def validate_decisions(value, symbols):
     if not isinstance(value, dict) or set(value) != {'summary','decisions'}:
@@ -88,7 +93,7 @@ class DeepSeekAutopilot:
                 with session.post(self.cfg.deepseek_base_url.rstrip('/')+'/chat/completions',
                     headers={'Authorization':'Bearer '+self.cfg.deepseek_api_key},
                     json={'model':self.cfg.deepseek_model,'messages':[
-                        {'role':'system','content':SYSTEM},{'role':'user','content':compact_json(payload)}],
+                        {'role':'system','content':DIRECT_SYSTEM if self.cfg.paper_ds_authority else SYSTEM},{'role':'user','content':compact_json(payload)}],
                         'thinking':{'type':'disabled'},'response_format':{'type':'json_object'},
                         'temperature':0,'max_tokens':2048},
                     timeout=(4,30),allow_redirects=False,stream=True) as response:
@@ -200,7 +205,7 @@ class PaperAutopilot:
             e.store.set('autopilot',e.store.get('autopilot',{}) | {
                 'status':'waiting_data','reason':'等待新鲜候选盘口与订单流特征','checked_at':utcnow()})
             return
-        if not positions and not any(m.get('potential') for m in markets):
+        if not e.cfg.paper_ds_authority and not positions and not any(m.get('potential') for m in markets):
             e.store.set('autopilot',e.store.get('autopilot',{})|{'status':'waiting_data',
                 'reason':'等待1–4小时多空候选与实时盘口重合，暂不花费AI请求','checked_at':utcnow()})
             return
@@ -210,11 +215,15 @@ class PaperAutopilot:
             'max_positions','paper_min_leverage','paper_max_leverage','paper_major_max_leverage',
             'paper_risk_fraction','fee_rate','paper_slippage')}
         payload = {'background':{'schema':'paper.portfolio.v2','selection_horizon':'1-4h',
-                       'entry_horizon':'5-15m with 5-60s microstructure check',
+                       'decision_authority':'deepseek' if e.cfg.paper_ds_authority else 'confirmed_ai_plan',
+                       'entry_horizon':'5-15m with 5-60s microstructure context' if e.cfg.paper_ds_authority else '5-15m with 5-60s microstructure check',
                        'limits':limits,'feature_order':FEATURES},
             'current':{'markets':markets,'positions':{s:p for s,p in positions.items() if s in allowed},
                        'account':e.store.get('account',{}),'paused_entries':e.store.get('paused',False),
                        'feedback':{k:report[k] for k in ('net_pnl','window_trades','win_rate','by_symbol') if k in report}}}
+        if e.cfg.paper_fast_execution:
+            from .shortline import compound_budget
+            payload['current']['reinvestment_budget'] = compound_budget(e.cfg,e.store,positions)
         context = {'id':uuid.uuid4().hex,'started':now,'started_at':utcnow(),'rows':rows,
                    'positions':{s:position_identity(positions.get(s)) for s in allowed},
                    'potentials':potentials}
@@ -229,7 +238,8 @@ class PaperAutopilot:
             'daily_budget':daily,'daily_request_limit':288})
 
     def signal(self,symbol):
-        fast = self.engine.cfg.paper_fast_execution
+        direct = self.engine.cfg.paper_ds_authority
+        fast = self.engine.cfg.paper_fast_execution and not direct
         item = self.actions.get(symbol) if fast else self.actions.pop(symbol,None)
         if not item:
             return 'hold'
@@ -243,15 +253,15 @@ class PaperAutopilot:
             blocked = '决策已过期'
         elif position_identity(p) != ctx['positions'].get(symbol):
             blocked = '请求后持仓已变化，等待下一轮'
-        elif abs(row['price']/ctx['rows'][symbol]['price']-1) > .005:
+        elif d['action'] in ('long','short') and abs(row['price']/ctx['rows'][symbol]['price']-1) > .005:
             blocked = '请求后价格变化超过 0.5%，等待下一轮'
-        elif d['confidence']<e.cfg.ai_min_confidence and d['action'] != 'hold':
+        elif not direct and d['confidence']<e.cfg.ai_min_confidence and d['action'] != 'hold':
             blocked = '决策置信度低于阈值'
         elif d['action'] in ('long','short') and (p or e.store.get('paused',False)):
             blocked = '已有仓位或已暂停新仓'
         elif d['action'] in ('close','update') and not p:
             blocked = '当前空仓'
-        elif d['action'] in ('long','short'):
+        elif d['action'] in ('long','short') and not direct:
             potential=ctx['potentials'].get(symbol)
             if fast:
                 radar = self.lab.bus.get('potential_candidates') or {}
@@ -289,11 +299,15 @@ class PaperAutopilot:
             e.store.set('entry_context:'+symbol,{'model_version':'deepseek:'+e.cfg.deepseek_model,
                 'model_approved':False,'exploration':True,'feature_ts':row['ts'],
                 'confidence':d['confidence'],'regime':'microstructure','strategy':'ds_autopilot',
-                'ai_parameters':d,'autopilot_request':ctx['id']})
-            if fast:
+                'ai_parameters':d,'autopilot_request':ctx['id'],'ds_authority':direct})
+            if e.cfg.paper_fast_execution:
+                from .shortline import VERSION
                 context = e.store.get('entry_context:'+symbol)
                 context['shortline_version'] = VERSION
                 e.store.set('entry_context:'+symbol,context)
+            if direct:
+                e.store.set('entry_quality:'+symbol,{'passes':True,'reason':'DS最终决策，程序仅校验数据与执行约束',
+                    'decision_authority':'deepseek','at':utcnow(),'validated_edge':False})
         if fast and (not blocked or time.time()-ctx['started']>ttl or position_identity(p)!=ctx['positions'].get(symbol)):
             self.actions.pop(symbol,None)
             self.confirmations.pop(symbol,None)
@@ -304,7 +318,10 @@ class PaperAutopilot:
             p['stop_price'] = max(old_stop,candidate) if direction>0 else min(old_stop,candidate)
             p['stop_pct'] = min(p['stop_pct'],d['stop_loss_pct'])
             p['exit_plan'] = p['exit_plan'] | {'stop_pct':p['stop_pct'],'take_pct':d['take_profit_pct']}
+            p['take_price'] = p['entry']*(1+direction*d['take_profit_pct'])
             p['ds_hold_seconds'] = d['hold_seconds']
+            if direct:
+                p['ds_authority'] = True
             positions = e.store.get('positions',{})
             positions[symbol] = p
             e.store.set('positions',positions)

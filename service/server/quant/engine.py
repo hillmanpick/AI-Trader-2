@@ -71,9 +71,10 @@ class Engine:
                 compound = None
                 if self.cfg.paper_fast_execution:
                     from .shortline import entry_check, compound_budget, compound_plan
-                    quality = entry_check(row,action,parameters,self.cfg)
-                    if not quality['passes']:
-                        raise ValueError(quality['reason'])
+                    if not self.cfg.paper_ds_authority:
+                        quality = entry_check(row,action,parameters,self.cfg)
+                        if not quality['passes']:
+                            raise ValueError(quality['reason'])
                     compound = compound_budget(self.cfg,self.store,positions)
                     self.store.set('shortline_budget',compound | {'at':utcnow()})
                     policy,parameters,cap = compound_plan(policy,parameters,compound,positions,cap,liquidity)
@@ -562,7 +563,7 @@ class Engine:
                         opened = datetime.fromisoformat(p['opened_at']).timestamp()
                         horizon = p.get('ds_hold_seconds',LabConfig().horizon_seconds)
                         if time.time()-opened >= horizon:
-                            exit_reason = 'model_horizon'
+                            exit_reason = 'ds_horizon' if p.get('ds_authority') else 'model_horizon'
                     positions = self.store.get('positions',{})
                     positions[symbol] = p
                     self.store.set('positions',positions)

@@ -261,6 +261,73 @@ def fast_market(controller):
     return ctl,e,db,lab,future,row
 
 
+@pytest.mark.parametrize('action',['long','short'])
+def test_ds_authority_executes_once_without_strategy_vetoes(controller,action):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    e.cfg=replace(e.cfg,paper_ds_authority=True)
+    lab.bus.get.side_effect=lambda k:None
+    # Flat trend, adverse flow, low confidence, tiny target and active cooldown
+    # are context for DS, not a second programmatic strategy decision.
+    row['vector']=[0.]*len(FEATURES)
+    db.set('shortline_cooldown:BTCUSDT',time.time()+120)
+    ctl.tick()
+    payload=ctl.pool.submit.call_args.args[1]
+    assert payload['background']['decision_authority']=='deepseek'
+    assert payload['current']['reinvestment_budget']['per_trade_risk_usdt']==30
+    future.set_result({'status':'complete','decisions':[decision(action=action,confidence=.01,take_profit_pct=.0001)]})
+    ctl.tick()
+    assert ctl.signal('BTCUSDT')==action
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert db.get('entry_context:BTCUSDT')['ds_authority'] is True
+    e.lab_row=lab.row;e.lab_risk_cap=lambda s,side,cap:(cap,{})
+    e.exchange.liquidity.return_value={'spread_bps':1,'ask_depth':1e8,'bid_depth':1e8,
+        'depth_bps':10,'updated_ms':int(time.time()*1000)}
+    plan=e.entry_profile(100,[],'BTCUSDT',action)
+    assert plan['take_pct']==.0001
+    assert plan['planned_risk_usdt']<=30+1e-8
+    assert plan['margin']<=2000
+    e.exchange.order.assert_not_called()
+
+
+@pytest.mark.parametrize('mode',['expired','position_changed','price_changed','paused','stale_depth'])
+def test_ds_authority_preserves_execution_constraints(controller,mode):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    e.cfg=replace(e.cfg,paper_ds_authority=True)
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision()]});ctl.tick()
+    if mode=='expired': ctl.actions['BTCUSDT'][1]['started']-=100
+    if mode=='position_changed': db.set('positions',{'BTCUSDT':{'opened_at':'new','amount':1,'entry':100}})
+    if mode=='price_changed': row['price']=110
+    if mode=='paused': db.set('paused',True)
+    if mode=='stale_depth':
+        assert ctl.signal('BTCUSDT')=='long'
+        e.exchange.liquidity.return_value={'spread_bps':1,'ask_depth':1e8,'bid_depth':1e8,
+            'depth_bps':10,'updated_ms':int(time.time()*1000)-5000}
+        with pytest.raises(ValueError,match='freshness'):
+            e.entry_profile(100,[],'BTCUSDT','long')
+    else:
+        assert ctl.signal('BTCUSDT')=='hold'
+    assert not db.orders()
+    e.exchange.order.assert_not_called()
+
+
+def test_ds_authority_can_close_after_price_jump_with_low_confidence(controller):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    e.cfg=replace(e.cfg,paper_ds_authority=True)
+    db.set('positions',{'BTCUSDT':{'opened_at':'held','amount':1,'entry':100}})
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision(action='close',confidence=.01)]});ctl.tick()
+    row['price']=110
+    assert ctl.signal('BTCUSDT')=='close'
+    assert ctl.signal('BTCUSDT')=='hold'
+
+
+def test_ds_authority_requires_protected_paper_account(controller):
+    _,e,_,_,_=controller
+    for changes in ({'paper_ai_autopilot':False},{'paper_dynamic_exits':False},
+                    {'api_key':'key'},{'live_enabled':True},{'mode':'live'}):
+        with pytest.raises(ValueError):
+            replace(e.cfg,paper_ds_authority=True,**changes).validate()
+
+
 def test_fast_plan_waits_for_two_distinct_samples_and_is_consumed_once(controller):
     ctl,e,db,lab,future,row=fast_market(controller)
     ctl.tick();future.set_result({'status':'complete','decisions':[decision()]});ctl.tick()

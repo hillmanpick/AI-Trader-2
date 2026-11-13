@@ -52,6 +52,7 @@ def paper_settings(base):
                   paper_ai_autopilot=os.getenv('QUANT_PAPER_AI_AUTOPILOT','false').lower() == 'true',
                   paper_ai_autopilot_interval=int(os.getenv('QUANT_PAPER_AI_AUTOPILOT_INTERVAL_SECONDS','60')),
                   paper_fast_execution=os.getenv('QUANT_PAPER_FAST_EXECUTION','false').lower()=='true',
+                  paper_ds_authority=os.getenv('QUANT_PAPER_DS_AUTHORITY','false').lower()=='true',
                   paper_compound_capital=float(os.getenv('QUANT_PAPER_COMPOUND_CAPITAL_USDT','6000')),
                   paper_summary_only=os.getenv('QUANT_PAPER_MAIL_SUMMARY_ONLY','true').lower() == 'true',
                   reflection_enabled=os.getenv('QUANT_PAPER_REFLECTION_ENABLED','true').lower() == 'true',

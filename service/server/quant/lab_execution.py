@@ -115,7 +115,7 @@ class LabExecution:
         e = self.engine
         if not self.gate(symbol):
             e.store.set(f'signal:{symbol}',{'action':'hold','reason':self.status.get('reason') if not self.status.get('ready') else '实时特征或盘口尚未就绪',
-                                          'at':utcnow(),'source':'numeric_model'})
+                                          'at':utcnow(),'source':'deepseek_autopilot' if self.autopilot else 'numeric_model'})
             return 'hold'
         try:
             row = self.row(symbol)

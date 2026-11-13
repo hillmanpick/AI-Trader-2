@@ -156,6 +156,15 @@ def size_risk_plan(plan,margin,fee_rate,slippage,min_leverage,max_leverage,
 
 def update_dynamic_exit(position, plan, fee_rate, slippage):
     """Stops only tighten; targets follow the last closed candle's ATR."""
+    if position.get('ds_authority'):
+        direction = 1 if position['amount']>0 else -1
+        stop = position.get('stop_price',position['entry']*(1-direction*position['stop_pct']))
+        take = position.get('take_price',position['entry']*(1+direction*plan['take_pct']))
+        if (position['mark']-stop)*direction<=0:
+            return 'ds_stop_loss'
+        if (position['mark']-take)*direction>=0:
+            return 'ds_take_profit'
+        return None
     long = position['amount'] > 0
     direction = 1 if long else -1
     entry, mark = position['entry'], position['mark']

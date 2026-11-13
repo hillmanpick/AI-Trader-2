@@ -10,7 +10,7 @@ def policy_for_settings(cfg, horizon_seconds=300):
         'paper_major_max_leverage',
         'paper_depth_participation','paper_depth_range_bps','paper_max_spread_bps',
         'max_positions','max_notional','paper_exploration_mode',
-        'paper_fast_execution','paper_compound_capital')} | {'horizon_seconds':horizon_seconds,
+        'paper_fast_execution','paper_compound_capital','paper_ds_authority')} | {'horizon_seconds':horizon_seconds,
             'entry_plan_schema':'shared-microstructure-v3-quote-budget',
             'shortline_schema':'ai-plan-flow-v1' if cfg.paper_fast_execution else None,
             'major_symbol_max_leverage':cfg.paper_major_max_leverage,
@@ -39,7 +39,7 @@ def microstructure_plan(row, liquidity, policy, positions, maximum, ai_parameter
         volatility.update(stop_pct=float(ai_parameters['stop_loss_pct']),
                           take_pct=float(ai_parameters['take_profit_pct']), regime='ds_autopilot')
     cost = 2*(policy['fee_rate']+policy['paper_slippage'])+liquidity['spread_bps']/10000
-    if volatility['take_pct'] <= cost*1.5:
+    if volatility['take_pct'] <= cost*1.5 and not (ai_parameters and policy.get('paper_ds_authority')):
         raise ValueError('Target does not cover trading costs')
     risk = sum(float(p.get('exit_plan',p.get('plan',{})).get('planned_risk_usdt',
                p.get('initial_margin',p.get('margin',0)))) for p in positions.values())

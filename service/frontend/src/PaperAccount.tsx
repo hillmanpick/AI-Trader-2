@@ -33,7 +33,7 @@ export function PaperAccount() {
     ? positions.reduce((sum, p) => sum + p.initial_margin!, 0) : null
   return <section className="card" style={{ padding: 22, marginBottom: 22, lineHeight: 1.8 }}>
     <h2>独立模拟交易 <span className="tag">虚拟成交 · 实盘只读</span></h2>
-    <p>使用币安公开行情与规则或数值模型。模拟进程没有币安密钥，不能向交易所提交订单。</p>
+    <p>使用币安公开行情，由当前启用的 DS 或量化策略决策。模拟进程没有币安密钥，不能向交易所提交订单。</p>
     {error && <p role="alert">{error}</p>}
     {!data ? <p>正在读取模拟账户…</p> : <>
       <p>状态：{data.stale ? '进程心跳过期' : names[data.worker.status] || data.worker.status} · 最后心跳 {beijingTime(data.worker.heartbeat)}（UTC+8）</p>
@@ -44,7 +44,7 @@ export function PaperAccount() {
         <div className="paper-performance-card"><span>全部盈利</span><strong className={(data.performance?.net || 0) >= 0 ? 'is-profit' : 'is-loss'}>{signedFmt(data.performance?.net)} USDT</strong><small>已实现净盈亏，已扣手续费</small></div>
       </div>
       {data.config.paper_ai_autopilot && <div style={{ border: '1px solid var(--accent-primary)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
-        <h3>DeepSeek 自主操盘 · 当前模拟账户</h3>
+        <h3>DeepSeek 自主操盘 · {data.config.paper_ds_authority ? 'DS 最终决策权' : '当前模拟账户'}</h3>
         <p>全市场快速排序与1–4小时多空雷达筛选候选，DS结合5m/15m方向和5s–60s订单流选择合约与方向，并管理平仓、保证金、杠杆上限和保护参数；程序校验后按实际盘口模拟成交。当前模型：{data.config.ai_model}。</p>
         <p>状态：{{ pending: '正在分析', complete: '已完成本轮决策', expired: '响应已过期，等待下一轮', error: '请求失败，本轮观望', waiting_data: '等待实时数据' }[data.autopilot?.status as string] || '等待首次分析'} · 最近完成 {beijingTime(data.autopilot?.at)} · 每 {data.config.paper_ai_autopilot_interval_seconds} 秒最多一批请求</p>
         {data.autopilot?.summary && <p>{data.autopilot.summary}</p>}
@@ -54,7 +54,7 @@ export function PaperAccount() {
       </div>}
       {data.config.paper_fast_execution && <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
         <h3>短线执行与净利润复投 · 模拟验证中</h3>
-        <p>AI 提供最长 5 分钟有效的交易计划，程序等待两个独立盘口特征样本确认方向、订单流和成本；平仓后同币冷却 120 秒。成交频率由有效信号决定。</p>
+        <p>{data.config.paper_ds_authority ? 'DS 决定选币、方向和开平仓，程序仅校验指令时效、资金、风险与盘口成交条件；不再用方向评分、趋势、订单流、双样本或冷却期否决。止盈止损按 DS 参数执行，允许 DS 主动更新保护。' : 'AI 提供最长 5 分钟有效的交易计划，程序等待两个独立盘口特征样本确认方向、订单流和成本；平仓后同币冷却 120 秒。成交频率由有效信号决定。'}</p>
         <p>本策略已实现净盈亏 <strong>{signedFmt(data.shortline?.performance?.net ?? 0)} USDT</strong> · 已平仓 {fmt(data.shortline?.performance?.completed ?? 0, 0)} 笔 · 盈利 {fmt(data.shortline?.performance?.wins ?? 0, 0)} 笔 · 手续费 {fmt(data.shortline?.performance?.fees ?? 0)} USDT</p>
         <p>复投参考资金 {fmt(data.shortline?.budget?.base_capital)} USDT · 当前规模系数 {fmt(data.shortline?.budget?.multiplier, 4)} · 单笔风险预算 {fmt(data.shortline?.budget?.per_trade_risk_usdt)} USDT · 组合风险预算 {fmt(data.shortline?.budget?.portfolio_risk_usdt)} USDT</p>
         <small>只按本策略已实现净盈亏调整规模，充值和历史策略不计入复投；浮亏会缩小预算。原保证金上限继续生效。这不是毫秒级高频策略，尚无稳定盈利证据；模拟账本目前未计资金费，保本触发价也不能保证跳价后保本。</small>
@@ -69,11 +69,11 @@ export function PaperAccount() {
       {data.config.paper_lab_required && <p>模拟订单采用盘口分档 IOC 成交，未成交余额过期，剩余持仓继续管理。累计订单 {fmt(data.execution_statistics?.orders, 0)} · 首次成交 P50 {fmt(data.execution_statistics?.first_fill?.p50_ms)} / P95 {fmt(data.execution_statistics?.first_fill?.p95_ms)} 毫秒。这里测量模拟处理链路，不代表币安真实下单延迟。</p>}
       <p>{data.config.symbols.join('、')} · {data.config.interval} K 线 · 均线 {data.config.fast}/{data.config.slow} · {data.config.paper_dynamic_exits ? '新仓使用 ATR14 动态目标与移动止损，止损只收紧，不放宽' : `模拟止损 ${data.config.stop_pct * 100}% / 止盈 ${data.config.take_pct * 100}%`} · 模拟盘不设每日亏损上限</p>
       <p>{data.config.paper_ai_autopilot ? 'DS 判断方向和仓位参数 · 行情事件唤醒保护检查' : data.config.strategy === 'lab_model' ? '数值模型判断方向 · 行情事件唤醒退出检查' : data.config.strategy === 'adaptive' ? '趋势：均线交叉跟随 · 震荡：布林带区间回归' : data.config.strategy} · {data.config.paper_dynamic_leverage ? '新仓动态杠杆' : `新仓 ${data.config.leverage} 倍杠杆`}。旧仓保留开仓时的保证金与风控参数。</p>
-      <p>AI 模式：{data.config.paper_ai_autopilot ? 'DeepSeek 自主决策' : data.config.ai_enabled ? '开仓审核' : '自动调用关闭'} · 置信度阈值 {fmt(data.config.ai_min_confidence * 100)}% · 资金、风险上限和成交由模拟执行器约束。</p>
+      <p>AI 模式：{data.config.paper_ai_autopilot ? 'DeepSeek 自主决策' : data.config.ai_enabled ? '开仓审核' : '自动调用关闭'} · {data.config.paper_ds_authority ? '置信度仅供参考，不作为程序否决条件' : `置信度阈值 ${fmt(data.config.ai_min_confidence * 100)}%`} · 资金、风险上限和成交由模拟执行器约束。</p>
       <p><strong>策略反思：{data.reflection?.enabled ? `版本 ${data.reflection.active?.version || 1}，已完成 ${data.reflection.report?.window_trades || 0} 笔归因` : '未启用'}</strong> · 最近窗口净盈亏 {fmt(data.reflection?.report?.net_pnl)} USDT · 成本/逐笔毛盈亏绝对值之和 {fmt((data.reflection?.report?.cost_ratio || 0) * 100)}% · {data.reflection?.active?.reason || '等待足够样本'}</p>
-      <p>虚拟权益 {fmt(data.account.equity)} USDT · 虚拟可用 {fmt(data.account.available)} USDT · <strong>当前持仓保证金合计 {fmt(totalMargin)} USDT</strong> · {data.daily_loss_blocked ? '每日亏损限制已触发，停止开新仓' : data.config.strategy === 'lab_model' ? '等待有效模型信号与风险检查' : '等待策略信号，通过 AI 审核后才模拟成交'}</p>
+      <p>虚拟权益 {fmt(data.account.equity)} USDT · 虚拟可用 {fmt(data.account.available)} USDT · <strong>当前持仓保证金合计 {fmt(totalMargin)} USDT</strong> · {data.daily_loss_blocked ? '每日亏损限制已触发，停止开新仓' : data.config.paper_ai_autopilot ? '按 DS 决策执行，受资金与成交条件约束' : data.config.strategy === 'lab_model' ? '等待有效模型信号与风险检查' : '等待策略信号，通过 AI 审核后才模拟成交'}</p>
       <p>启动时不补做历史信号，不强制开仓。已计手续费及每次成交 {fmt(data.config.paper_slippage_bps)} 基点的不利滑点；逐仓强平按固定维持保证金率 {fmt(data.config.paper_maintenance_rate * 100)}% 近似计算，未覆盖币安风险档位、资金费和真实订单簿冲击，模拟杠杆不代表交易所允许的杠杆。这里是分钟级短线与区间交易，没有执行双腿套利。</p>
-      {Object.entries(data.positions || {}).length ? <div className="table-container"><table className="table"><thead><tr><th>合约</th><th>方向</th><th>杠杆</th><th>开仓保证金</th><th>计划风险</th><th>MAE / MFE</th><th>数量</th><th>入场价</th><th>标记价</th><th>模拟浮盈亏</th><th>移动止损价</th><th>动态止盈价</th></tr></thead><tbody>{Object.entries(data.positions).map(([symbol, raw]) => { const p = raw as any; return <tr key={symbol}><td>{symbol}</td><td>{p.amount > 0 ? '多' : '空'}</td><td><strong>{formatLeverage(p.leverage)}</strong></td><td><strong>{fmt(p.initial_margin)} USDT</strong></td><td>{fmt(p.exit_plan?.planned_risk_usdt)} USDT</td><td>{fmt((p.mae_pct || 0) * 100)}% / {fmt((p.mfe_pct || 0) * 100)}%</td><td>{fmt(Math.abs(p.amount), 8)}</td><td>{fmt(p.entry, 6)}</td><td>{fmt(p.mark, 6)}</td><td>{fmt(p.pnl, 4)} USDT</td><td>{fmt(p.stop_price, 6)}</td><td>{fmt(p.take_price, 6)}</td></tr> })}</tbody></table></div> : <p>独立模拟账户当前空仓。</p>}
+      {Object.entries(data.positions || {}).length ? <div className="table-container"><table className="table"><thead><tr><th>合约</th><th>方向</th><th>杠杆</th><th>开仓保证金</th><th>计划风险</th><th>MAE / MFE</th><th>数量</th><th>入场价</th><th>标记价</th><th>模拟浮盈亏</th><th>止损价</th><th>止盈价</th></tr></thead><tbody>{Object.entries(data.positions).map(([symbol, raw]) => { const p = raw as any; return <tr key={symbol}><td>{symbol}</td><td>{p.amount > 0 ? '多' : '空'}</td><td><strong>{formatLeverage(p.leverage)}</strong></td><td><strong>{fmt(p.initial_margin)} USDT</strong></td><td>{fmt(p.exit_plan?.planned_risk_usdt)} USDT</td><td>{fmt((p.mae_pct || 0) * 100)}% / {fmt((p.mfe_pct || 0) * 100)}%</td><td>{fmt(Math.abs(p.amount), 8)}</td><td>{fmt(p.entry, 6)}</td><td>{fmt(p.mark, 6)}</td><td>{fmt(p.pnl, 4)} USDT</td><td>{fmt(p.stop_price, 6)}</td><td>{fmt(p.take_price, 6)}</td></tr> })}</tbody></table></div> : <p>独立模拟账户当前空仓。</p>}
       <h3>{data.config.paper_ai_autopilot ? 'DS 决策与执行检查' : data.config.strategy === 'lab_model' ? '数值模型信号' : '模拟信号与 AI 审核'}</h3>
       {data.config.symbols.map((symbol: string) => <article key={symbol}><strong>{symbol} · {actions[data.signals?.[symbol]?.action] || '等待新决策'}</strong>
         {data.config.paper_ai_autopilot ? <><p>{data.signals?.[symbol]?.reason || '等待 DS 下一批分析'} · {beijingTime(data.signals?.[symbol]?.at)}</p>

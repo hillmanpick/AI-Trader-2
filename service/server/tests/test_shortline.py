@@ -105,12 +105,13 @@ def test_protected_trigger_covers_entry_fee_exit_fee_and_adverse_execution(side)
     assert (p['stop_price']-prior)*side>=0
 
 
-def test_partial_fills_update_policy_net_and_cycle_counts_atomically(tmp_path):
+@pytest.mark.parametrize('direct',[False,True])
+def test_partial_fills_update_policy_net_and_cycle_counts_atomically(tmp_path,direct):
     cfg,store=setup(tmp_path)
     store.set('paper_balance',10000)
     engine=Engine(cfg,store,MagicMock())
     execution=PaperExecution(engine,MagicMock())
-    context={'leverage':2,'shortline_version':VERSION,
+    context={'leverage':2,'shortline_version':VERSION,'ds_authority':direct,
              'entry_profile':{'stop_pct':.01,'take_pct':.02}}
     def fill(identity,closing,qty,price,fee,stamp):
         order={'id':identity,'symbol':'BTCUSDT','side':-1 if closing else 1,
@@ -120,6 +121,7 @@ def test_partial_fills_update_policy_net_and_cycle_counts_atomically(tmp_path):
         with store.connect() as c:execution.apply_fill(c,f,order)
     fill('entry',False,1,100,.05,10**9)
     fill('entry',False,1,102,.051,2*10**9)
+    assert store.get('positions')['BTCUSDT'].get('ds_authority',False) is direct
     fill('close',True,1,103,.0515,3*10**9)
     partial=store.get(STATS_KEY)
     assert partial['completed']==0 and partial['net']==pytest.approx(1.898)
@@ -138,3 +140,18 @@ def test_fast_execution_cannot_enable_without_paper_ai(tmp_path):
     cfg,_=setup(tmp_path)
     with pytest.raises(ValueError,match='Shortline'):
         replace(cfg,paper_fast_execution=True).validate()
+
+
+@pytest.mark.parametrize('side',[1,-1])
+def test_ds_protection_uses_its_targets_without_automatic_trailing(side):
+    p={'amount':side,'entry':100.,'mark':100*(1+side*.004),'ds_authority':True,
+       'shortline_version':VERSION,'stop_pct':.01,'stop_price':100*(1-side*.01),
+       'take_price':100*(1+side*.02)}
+    plan={'stop_pct':.001,'take_pct':.001,'atr':.01,'regime':'test'}
+    initial=dict(p)
+    assert update_dynamic_exit(p,plan,.0005,.0003) is None
+    assert p==initial
+    p['mark']=p['take_price']
+    assert update_dynamic_exit(p,plan,.0005,.0003)=='ds_take_profit'
+    p['mark']=p['stop_price']
+    assert update_dynamic_exit(p,plan,.0005,.0003)=='ds_stop_loss'
