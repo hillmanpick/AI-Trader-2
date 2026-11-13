@@ -35,6 +35,7 @@ def test_score_uses_closed_history_and_missing_context_is_not_neutral_confirmati
     assert not a['features']['oi_available'] and not a['features']['spot_available']
     assert a['components']['open_interest']==0 and a['components']['spot_confirmation']==0
     assert a['score_kind']=='rule_score_not_probability'
+    assert a['short_score']>=0 and a['timing']['return_15m']==pytest.approx(a['features']['return_15m'])
     unfinished=[NOW,1,1e9,1,1e9,0,NOW+BAR_MS-1,1e15,0,0,1e15,0]
     assert closed_bars(raw+[unfinished],NOW)==bars
     with pytest.raises(ValueError):closed_bars(raw[:100]+raw[101:],NOW)
@@ -131,6 +132,7 @@ def test_worker_reuses_fresh_redis_flow_and_only_calls_public_gets(tmp_path,monk
             if path.endswith('openInterestHist'):return []
             return raw_bars()
     class Bus:
+        def put(self,key,value,ttl=None):self.last=(key,value,ttl)
         def get(self,key):
             return {'ts':NOW,'rows':[flow()]} if key=='ranking' else None
     db=PotentialStore(tmp_path);radar=Radar(Client(),Bus(),db)
@@ -139,6 +141,7 @@ def test_worker_reuses_fresh_redis_flow_and_only_calls_public_gets(tmp_path,monk
     assert status['status']=='running' and status['enriched_candidates']==1
     assert status['observations']==1 and not status['execution_enabled']
     assert status['candidates'][0]['prediction'] is None
+    assert radar.bus.last[0]=='potential_candidates'
 
 
 def test_request_budget_includes_rotating_controls_and_leaders(tmp_path,monkeypatch):
@@ -153,6 +156,7 @@ def test_request_budget_includes_rotating_controls_and_leaders(tmp_path,monkeypa
             if path.endswith('openInterestHist'):return []
             return raw_bars()
     class Bus:
+        def put(self,key,value,ttl=None):self.last=(key,value,ttl)
         def get(self,key):
             return {'ts':NOW,'rows':[flow(f'Z{i:02}USDT') for i in range(20)]+[flow('AAAUSDT')]} if key=='ranking' else None
     db=PotentialStore(tmp_path);client=Client();radar=Radar(client,Bus(),db)
@@ -167,6 +171,7 @@ def test_request_budget_includes_rotating_controls_and_leaders(tmp_path,monkeypa
     with db.connect() as c:
         seen={r[0] for r in c.execute('SELECT symbol FROM radar_observations')}
     assert {'Z02USDT','Z03USDT'}<=seen
+    assert radar.bus.last[0]=='potential_candidates'
 
 
 def test_missing_history_retry_does_not_block_other_due_observations(tmp_path):

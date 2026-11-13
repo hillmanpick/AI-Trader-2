@@ -40,6 +40,7 @@ def test_context_filters_stale_weak_and_untrusted_input_and_limits_candidates():
     result=context(value,NOW)
     assert len(result['candidates'])==5
     assert all('buy this now' not in r['symbol'] for r in result['candidates'])
+    assert {'long_score','short_score','timing'}<=set(result['candidates'][0])
     assert context(value,NOW+180001) is None
 
 

@@ -110,7 +110,26 @@ def candidate(row, bars, btc_bars, now_ms, oi=None, funding=None, spot=None, liq
     last=bars[-1]
     if last['high']/max(last['open'],last['close'])-1>max(.01,volatility*2):
         penalty+=10;risks.append('最近完成 K 线有较长上影')
+    prior_low=min(b['low'] for b in bars[-73:-3]);breakdown=price/prior_low-1
+    short_components={'volume':components['volume'],'relative_weakness':20*clamp(-relative/.03),
+        'trend':15*clamp(-r1/.04) if r15<0 else 0.,'sell_flow':15*clamp(-(flow+v[3])/2),
+        'breakdown':10. if -.08<=breakdown<=.005 and r1<0 else 0.,
+        'open_interest':10*clamp(oi_change/.1) if oi_ok and r1<0 else 0.,
+        'spot_confirmation':10*clamp(-spot_return/.03) if spot_ok and spot_flow<0 else 0.}
+    short_penalty=0.;short_risks=[]
+    if funding_ok and rate<-.001:short_penalty+=15;short_risks.append('负资金费率偏高，注意拥挤空头与轧空')
+    if breakdown<-.08 or v[7]<-.5:short_penalty+=15;short_risks.append('已明显下跌，存在追空反弹风险')
+    if r15>0:short_penalty+=10;short_risks.append('最近15分钟反弹，尚无持续下行确认')
+    if book_ok and finite(liquidity['spread_bps'])>10:short_penalty+=20;short_risks.append('实时价差较宽')
+    if min(last['open'],last['close'])/last['low']-1>max(.01,volatility*2):
+        short_penalty+=10;short_risks.append('最近完成K线有较长下影')
+    short_score=round(max(0,sum(short_components.values())-short_penalty),2)
+    timing={'return_5m':ret(1),'return_15m':r15,'range_high_1h':max(b['high'] for b in bars[-12:]),
+        'range_low_1h':min(b['low'] for b in bars[-12:]),'last_closed_high':last['high'],
+        'last_closed_low':last['low'],'last_closed_close':last['close'],'breakdown_distance':breakdown,
+        'history_end_ms':last['ts']+BAR_MS-1}
     return {'symbol':row['symbol'],'ts':now_ms,'price':price,'score':round(max(0,sum(components.values())-penalty),2),
+        'short_score':short_score,'short_components':short_components,'short_risks':short_risks,'timing':timing,
         'score_kind':'rule_score_not_probability','reasons':reasons or ['尚无足够上涨共振信号'],
         'risks':risks,'features':features,'vector':[features[k] for k in FEATURES],
         'components':components,'penalty':penalty,'volume_24h_usdt':volume24,

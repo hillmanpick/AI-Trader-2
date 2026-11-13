@@ -938,10 +938,15 @@ def test_execution_book_publisher_does_not_wait_for_feature_sampling(tmp_path):
         collector.selected = ('BTCUSDT',)
         collector.books['BTCUSDT'] = book(now)
         collector.bus = MagicMock()
+        published=asyncio.Event()
+        loop=asyncio.get_running_loop()
+        collector.bus.event.side_effect=lambda *args:loop.call_soon_threadsafe(published.set)
         task = asyncio.create_task(collector.fast_books())
-        await asyncio.sleep(.05)
-        task.cancel()
-        await asyncio.gather(task,return_exceptions=True)
+        try:
+            await asyncio.wait_for(published.wait(),timeout=2)
+        finally:
+            task.cancel()
+            await asyncio.gather(task,return_exceptions=True)
         pipe = collector.bus.client.pipeline.return_value
         keys = [call.args[0] for call in pipe.set.call_args_list]
         assert keys==['quant:lab:book:BTCUSDT','quant:lab:liquidity:BTCUSDT']

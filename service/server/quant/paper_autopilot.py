@@ -4,6 +4,7 @@ import logging
 import math
 import time
 import uuid
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse
 
@@ -15,8 +16,10 @@ from .prompt_context import compact_json, community_context
 from .store import utcnow
 
 
-SYSTEM = '''你是币安 USDT 永续模拟盘的自主交易经理。根据数据自己选币、判断方向、开仓、平仓、持仓和调整保护参数；无需规则信号或数值模型批准。不能操作实盘。
+SYSTEM = '''你是币安 USDT 永续模拟盘的自主交易经理。根据数据自己从候选中选币、判断方向、开仓、平仓、持仓和调整保护参数；无需规则信号或数值模型批准。不能操作实盘。
 只能在 current.markets 给出的合约中决策，每币最多一条；不必每币都交易，没有扣费后优势就 hold，可省略观望币，减少无用输出。已有仓位反向要先 close，下一轮才能反向开仓；不加仓，不马丁，不删除保护。
+采用双层判断：potential 给出 1-4 小时方向/极端波动背景，5m/15m 变化判断入场时机，5s-60s 订单流和盘口用于临近执行。新开多仓只能选择 long_score >= 20 且高于 short_score 的合约；新开空仓只能选择 short_score >= 20 且高于 long_score 的合约。缺少新鲜 potential 时不要新开仓；已有仓位仍须逐轮判断退出。
+potential 的 long_score/short_score 是 0-100 规则共振分数，不是概率；return_* 是小数比例回报。current.markets 可能没有某币的慢周期 potential，不能因此自行补造。AI 置信度也不是盈利概率。
 只返回 JSON：{"summary":"简短中文组合判断","decisions":[{"symbol":"BTCUSDT","action":"hold","confidence":0.0,"reason":"简短中文理由","margin_usdt":0,"leverage":0,"stop_loss_pct":0,"take_profit_pct":0,"hold_seconds":0}]}。
 action 只能为 hold/long/short/close/update。long/short 必须给出正数保证金、整数杠杆、止损止盈距离和持仓秒数；update 可调整已有仓位止盈和止损距离、持仓秒数，止损只收紧。hold/close 其它参数填 0。止损止盈用小数（0.01=1%），hold_seconds 范围 60-3600。
 程序会依据硬性资金、组合相关性、流动性、费用、风险预算和强平距离限制执行。requested leverage 是上限，可能被风控调低。confidence 是判断信心，不能当成盈利概率。
@@ -87,7 +90,7 @@ class DeepSeekAutopilot:
                     json={'model':self.cfg.deepseek_model,'messages':[
                         {'role':'system','content':SYSTEM},{'role':'user','content':compact_json(payload)}],
                         'thinking':{'type':'disabled'},'response_format':{'type':'json_object'},
-                        'temperature':0,'max_tokens':3072},
+                        'temperature':0,'max_tokens':2048},
                     timeout=(4,30),allow_redirects=False,stream=True) as response:
                     if response.status_code != 200:
                         return failure('http_'+str(response.status_code))
@@ -139,6 +142,8 @@ class PaperAutopilot:
                 result = result | {'status':'expired','reason':'响应已过期','decisions':[]}
             status = result | {'at':utcnow(),'request_id':context['id'],
                                'started_at':context['started_at'],'mode':'paper'}
+            status['daily_budget']=e.store.get('autopilot:daily_budget',{})
+            status['daily_request_limit']=288
             prior = e.store.get('autopilot',{})
             totals = dict(prior.get('usage_total',{}))
             for k,v in result.get('telemetry',{}).get('usage',{}).items():
@@ -153,13 +158,30 @@ class PaperAutopilot:
             return
         if not e.cfg.enabled or not e.ready:
             return
-        if now-float(e.store.get('autopilot:last_request',0))<e.cfg.paper_ai_autopilot_interval:
+        interval=max(300,e.cfg.paper_ai_autopilot_interval)
+        if now-float(e.store.get('autopilot:last_request',0))<interval:
+            return
+        day=datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        daily=e.store.get('autopilot:daily_budget',{})
+        if daily.get('day_utc')!=day:daily={'day_utc':day,'requests':0}
+        if daily['requests']>=288:
+            e.store.set('autopilot',e.store.get('autopilot',{})|{'status':'daily_budget_exhausted',
+                'reason':'已达到每日 288 次 AI 决策上限','daily_budget':daily,'daily_request_limit':288})
             return
         # Batch fresh candidates, including managed positions; never queue per-symbol calls.
         positions = e.store.get('positions',{})
         symbols = sorted(e.cfg.symbols, key=lambda s:(s not in positions,s))
         markets,rows = [],{}
         community = e.store.get('community',{}) if e.cfg.community_enabled else {}
+        radar=self.lab.bus.get('potential_candidates') if hasattr(self.lab.bus,'get') else None
+        potentials={}
+        if (isinstance(radar,dict) and radar.get('schema')=='potential-radar-v1'
+                and 0<=time.time()*1000-radar.get('ts',0)<=180000):
+            for item in radar.get('rows',[]):
+                if (item.get('symbol') in symbols and 0<=time.time()*1000-item.get('ts',0)<=180000
+                        and all(type(item.get(k)) in (int,float) and math.isfinite(item[k])
+                                for k in ('long_score','short_score','return_5m','return_15m','return_1h','return_4h'))):
+                    potentials[item['symbol']]=item
         for s in symbols[:40]:
             try:
                 if not self.lab.gate(s):
@@ -169,6 +191,7 @@ class PaperAutopilot:
                 markets.append({'symbol':s,'price':r['price'],'ts':r['ts'],
                     'features':dict(zip(FEATURES,r['vector'])),
                     'atr_proxy':r['meta']['atr_proxy'],
+                    'potential':potentials.get(s),
                     'community':community_context(community,s)})
             except (ValueError,KeyError,TypeError):
                 continue
@@ -176,23 +199,33 @@ class PaperAutopilot:
             e.store.set('autopilot',e.store.get('autopilot',{}) | {
                 'status':'waiting_data','reason':'等待新鲜候选盘口与订单流特征','checked_at':utcnow()})
             return
+        if not positions and not any(m.get('potential') for m in markets):
+            e.store.set('autopilot',e.store.get('autopilot',{})|{'status':'waiting_data',
+                'reason':'等待1–4小时多空候选与实时盘口重合，暂不花费AI请求','checked_at':utcnow()})
+            return
         allowed = {m['symbol'] for m in markets}
         report = e.reflection.status().get('report',{})
         limits = {k:getattr(e.cfg,k) for k in ('paper_margin','paper_max_margin','max_notional',
             'max_positions','paper_min_leverage','paper_max_leverage','paper_major_max_leverage',
             'paper_risk_fraction','fee_rate','paper_slippage')}
-        payload = {'background':{'schema':'paper.portfolio.v1','limits':limits,'feature_order':FEATURES},
+        payload = {'background':{'schema':'paper.portfolio.v2','selection_horizon':'1-4h',
+                       'entry_horizon':'5-15m with 5-60s microstructure check',
+                       'limits':limits,'feature_order':FEATURES},
             'current':{'markets':markets,'positions':{s:p for s,p in positions.items() if s in allowed},
                        'account':e.store.get('account',{}),'paused_entries':e.store.get('paused',False),
                        'feedback':{k:report[k] for k in ('net_pnl','window_trades','win_rate','by_symbol') if k in report}}}
         context = {'id':uuid.uuid4().hex,'started':now,'started_at':utcnow(),'rows':rows,
-                   'positions':{s:position_identity(positions.get(s)) for s in allowed}}
+                   'positions':{s:position_identity(positions.get(s)) for s in allowed},
+                   'potentials':potentials}
         e.store.set('autopilot:last_request',now)
+        daily['requests']+=1
+        e.store.set('autopilot:daily_budget',daily)
         self.actions.clear()
         self.job = (self.pool.submit(self.client.decide,payload),context)
         e.store.set('autopilot',e.store.get('autopilot',{}) | {
             'status':'pending','reason':'DS 正在分析整批候选币与现有持仓',
-            'request_id':context['id'],'started_at':context['started_at'],'symbols':sorted(allowed)})
+            'request_id':context['id'],'started_at':context['started_at'],'symbols':sorted(allowed),
+            'daily_budget':daily,'daily_request_limit':288})
 
     def signal(self,symbol):
         item = self.actions.pop(symbol,None)
@@ -215,6 +248,13 @@ class PaperAutopilot:
             blocked = '已有仓位或已暂停新仓'
         elif d['action'] in ('close','update') and not p:
             blocked = '当前空仓'
+        elif d['action'] in ('long','short'):
+            potential=ctx['potentials'].get(symbol)
+            side='long_score' if d['action']=='long' else 'short_score'
+            other='short_score' if d['action']=='long' else 'long_score'
+            if (not potential or time.time()*1000-potential['ts']>180000
+                    or potential[side]<20 or potential[side]<=potential[other]):
+                blocked='1-4小时方向筛选不支持该方向或数据已过期'
         action = 'hold' if blocked else d['action']
         e.store.set('signal:'+symbol,d | {'action':action,'reason':blocked or d['reason'],
             'at':utcnow(),'source':'deepseek_autopilot','request_id':ctx['id']})

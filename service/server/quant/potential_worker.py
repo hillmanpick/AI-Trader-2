@@ -104,7 +104,9 @@ class Radar:
             return
         # Every pass includes fast leaders and rotating controls, avoiding only
         # retaining future winners. The watchlist never modifies the trade pool.
-        leaders=sorted(eligible,key=lambda r:-(max(0,r['direction_score'])*max(1,r['vector'][5])))[:12]
+        longs=sorted(eligible,key=lambda r:-(max(0,r['direction_score'])*max(1,r['vector'][5])))[:6]
+        shorts=sorted(eligible,key=lambda r:-(max(0,-r['direction_score'])*max(1,r['vector'][5])))[:6]
+        leaders=list({r['symbol']:r for pair in zip(longs,shorts) for r in pair}.values())
         ordered=sorted(eligible,key=lambda r:r['symbol'])
         controls=[ordered[self.scan_cursor%len(ordered)]] if ordered else []
         self.scan_cursor=(self.scan_cursor+1)%max(1,len(ordered))
@@ -168,7 +170,18 @@ class Radar:
             'mode':'validated_probability' if self.model else 'explainable_rule_score',
             'note':'观察雷达，不能保证暴涨；当前排名不下单；AI分析使用独立低频任务；仅覆盖币安已上市 USDT 永续',
             'label_sample':'hourly observations of enriched leaders and rotating controls; not a complete market census'}
+        directional=sorted(rows,key=lambda r:-max(r['score'],r.get('short_score',0)))
+        status['directional_candidates']=directional[:20]
         self.store.put('status',status);self.store.prune(stamp)
+        await asyncio.to_thread(self.bus.put,'potential_candidates',{'ts':stamp,'schema':SCHEMA,
+            'rows':[{'symbol':r['symbol'],'ts':r['ts'],'long_score':r['score'],'short_score':r.get('short_score',0),
+                'return_5m':r['timing']['return_5m'],'return_15m':r['features']['return_15m'],
+                'return_1h':r['features']['return_1h'],'return_4h':r['features']['return_4h'],
+                'relative_btc_1h':r['features']['relative_btc_1h'],'volume_multiple':r['features']['volume_multiple'],
+                'flow_15m':r['features']['flow_15m'],'oi_change_1h':r['features']['oi_change_1h'],
+                'funding_rate':r['features']['funding_rate'],'spot_return_1h':r['features']['spot_return_1h'],
+                'long_risks':r['risks'],'short_risks':r['short_risks']}
+                    for r in directional if max(r['score'],r.get('short_score',0))>=20]},180)
 
 
 async def run():

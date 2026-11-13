@@ -45,12 +45,12 @@ export function PaperAccount() {
       </div>
       {data.config.paper_ai_autopilot && <div style={{ border: '1px solid var(--accent-primary)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
         <h3>DeepSeek 自主操盘 · 当前模拟账户</h3>
-        <p>DS 选择候选币、开平仓方向、保证金、杠杆上限、止盈止损和持仓时间；程序校验后按实际盘口模拟成交。当前模型：{data.config.ai_model}。</p>
+        <p>全市场快速排序与1–4小时多空雷达筛选候选，DS结合5m/15m方向和5s–60s订单流选择合约与方向，并管理平仓、保证金、杠杆上限和保护参数；程序校验后按实际盘口模拟成交。当前模型：{data.config.ai_model}。</p>
         <p>状态：{{ pending: '正在分析', complete: '已完成本轮决策', expired: '响应已过期，等待下一轮', error: '请求失败，本轮观望', waiting_data: '等待实时数据' }[data.autopilot?.status as string] || '等待首次分析'} · 最近完成 {beijingTime(data.autopilot?.at)} · 每 {data.config.paper_ai_autopilot_interval_seconds} 秒最多一批请求</p>
         {data.autopilot?.summary && <p>{data.autopilot.summary}</p>}
         {data.autopilot?.reason && <p>{data.autopilot.reason}</p>}
-        <p>已完成请求 {fmt(data.autopilot?.requests || 0, 0)} · 累计输入 {fmt(data.autopilot?.usage_total?.prompt_tokens || 0, 0)} tokens · 缓存命中 {fmt(data.autopilot?.usage_total?.prompt_cache_hit_tokens || 0, 0)} · 缓存未命中 {fmt(data.autopilot?.usage_total?.prompt_cache_miss_tokens || 0, 0)} · 最近响应 {fmt(data.autopilot?.telemetry?.elapsed_ms, 0)} 毫秒</p>
-        <small>这是新的模拟策略，尚未通过盈利验证；此前成交和盈亏继续保留，实盘只读。</small>
+        <p>累计请求 {fmt(data.autopilot?.requests || 0, 0)} · 今日请求 {fmt(data.autopilot?.daily_budget?.requests || 0, 0)}/{fmt(data.autopilot?.daily_request_limit || 288, 0)} · 累计输入 {fmt(data.autopilot?.usage_total?.prompt_tokens || 0, 0)} tokens · 缓存命中 {fmt(data.autopilot?.usage_total?.prompt_cache_hit_tokens || 0, 0)} · 缓存未命中 {fmt(data.autopilot?.usage_total?.prompt_cache_miss_tokens || 0, 0)} · 最近响应 {fmt(data.autopilot?.telemetry?.elapsed_ms, 0)} 毫秒</p>
+        <small>最多每 5 分钟一批、每天最多 288 批；这是新的模拟策略，尚未通过盈利验证；此前成交和盈亏继续保留，实盘只读。</small>
       </div>}
       <p>行情通道：{data.worker.market_stream?.status === 'connected' ? 'WebSocket 实时行情已收到' : data.worker.market_stream?.status === 'no_market_events' ? 'WebSocket 暂无行情帧，使用 REST 回退并重试' : data.worker.market_stream?.status === 'reconnecting' ? `WebSocket 重连中（${data.worker.market_stream.reconnects || 0} 次），使用 REST 回退` : '等待 WebSocket · REST 回退可用'} · 新鲜标记价 {data.worker.market_stream?.fresh_marks || 0}/{data.config.symbols.length}</p>
       {data.worker.error && <p role="alert" style={{ color: '#edac65' }}>{data.worker.error}</p>}

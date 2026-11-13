@@ -15,6 +15,7 @@ from .lab_store import LabStore, RawArchive, RealtimeBus
 from .order_book import DepthBook
 from .event_lake import EventLake, envelope
 from .market_ranker import MarketRanker
+from .candidate_selection import select_research_candidates
 from .event_labels import EventLabeler, backfill_labels
 
 
@@ -725,7 +726,8 @@ class Collector:
                 ranking = self.ranker.rank(self.rules,self.tickers,int(time.time()*1000),self.cfg.min_volume)
                 eligible = [r['symbol'] for r in ranking if r['ready'] and r.get('eligible')]
                 if len(eligible)>=self.cfg.candidates:
-                    selected = tuple(dict.fromkeys(['BTCUSDT']+eligible))[:self.cfg.candidates]
+                    radar = await asyncio.to_thread(self.bus.get,'potential_candidates')
+                    selected = select_research_candidates(ranking,radar,self.cfg.candidates,int(time.time()*1000))
                 # A rotating rank must not remove execution depth for an open
                 # paper position. Keep its exit feed until the ledger is flat.
                 import os

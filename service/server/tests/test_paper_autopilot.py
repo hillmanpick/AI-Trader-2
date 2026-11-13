@@ -1,6 +1,7 @@
 import json
 import sys
 import time
+from datetime import datetime, timezone
 from concurrent.futures import Future
 from dataclasses import replace
 from pathlib import Path
@@ -38,6 +39,9 @@ def controller(tmp_path):
     engine.ready=True
     lab=MagicMock()
     lab.gate.return_value=True
+    lab.bus.get.side_effect=lambda key:{'schema':'potential-radar-v1','ts':int(time.time()*1000),
+        'rows':[{'symbol':'BTCUSDT','ts':int(time.time()*1000),'long_score':40,'short_score':10,
+            'return_5m':.002,'return_15m':.004,'return_1h':.01,'return_4h':.02}]} if key=='potential_candidates' else None
     lab.row.side_effect=lambda s:{'symbol':s,'price':100,'ts':int(time.time()*1000),
         'vector':[0.]*len(FEATURES),'meta':{'atr_proxy':.001,'schema':SCHEMA,'quality':True}}
     ctl=PaperAutopilot(engine,lab)
@@ -70,6 +74,8 @@ def test_one_portfolio_call_per_interval_no_queue_and_no_replay(controller):
     payload=ctl.pool.submit.call_args.args[1]
     assert len(payload['current']['markets'])==2
     assert list(payload['current']['markets'][0]['features'])==list(FEATURES)
+    assert payload['current']['markets'][0]['potential']['long_score']==40
+    assert payload['background']['selection_horizon']=='1-4h'
     for _ in range(3): ctl.tick()
     ctl.pool.submit.assert_called_once()
     future.set_result({'status':'complete','summary':'test','decisions':[decision()]})
@@ -96,6 +102,58 @@ def test_stale_or_conflicting_decision_never_executes(controller,mode):
     assert ctl.signal('BTCUSDT')=='hold'
     assert not db.orders()
     e.exchange.order.assert_not_called()
+
+
+@pytest.mark.parametrize('radar,action',[
+    (None,'long'),
+    ({'long_score':10,'short_score':40,'ts':0},'long'),
+    ({'long_score':40,'short_score':40,'ts':0},'long'),
+])
+def test_new_position_requires_fresh_stronger_matching_horizon_score(controller,radar,action):
+    ctl,e,db,lab,future=controller
+    ctl.tick()
+    future.set_result({'status':'complete','decisions':[decision(action=action)]})
+    ctl.tick()
+    if radar is None:
+        ctx=ctl.actions['BTCUSDT'][1]
+        ctx['potentials'].pop('BTCUSDT')
+    else:
+        radar=radar|{'ts':int(time.time()*1000)}
+        ctl.actions['BTCUSDT'][1]['potentials']['BTCUSDT']=radar
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert '1-4小时' in db.get('signal:BTCUSDT')['reason']
+    assert not db.orders()
+
+
+def test_fresh_matching_extreme_direction_can_reach_paper_sizing(controller):
+    ctl,e,db,lab,future=controller
+    ctl.tick()
+    future.set_result({'status':'complete','decisions':[decision()]})
+    ctl.tick()
+    assert ctl.signal('BTCUSDT')=='long'
+    assert db.get('entry_context:BTCUSDT')['ai_parameters']['action']=='long'
+
+
+def test_short_decision_and_stale_horizon_snapshot_are_checked(controller):
+    ctl,e,db,lab,future=controller
+    ctl.tick()
+    future.set_result({'status':'complete','decisions':[decision(action='short')]})
+    ctl.tick()
+    radar=ctl.actions['BTCUSDT'][1]['potentials']['BTCUSDT']|{'long_score':10,'short_score':40,
+        'ts':int(time.time()*1000)-181000}
+    ctl.actions['BTCUSDT'][1]['potentials']['BTCUSDT']=radar
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert '1-4小时' in db.get('signal:BTCUSDT')['reason']
+
+
+def test_daily_request_budget_persists_across_autopilot_instances(controller,monkeypatch):
+    ctl,e,db,lab,future=controller
+    day=datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    db.set('autopilot:daily_budget',{'day_utc':day,'requests':288})
+    ctl.tick()
+    assert ctl.pool.submit.call_count==0
+    assert db.get('autopilot')['status']=='daily_budget_exhausted'
+    assert db.get('autopilot')['daily_request_limit']==288
 
 
 def test_response_consumed_once_even_when_request_errors(controller):
