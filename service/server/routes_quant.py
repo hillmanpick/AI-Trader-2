@@ -82,6 +82,13 @@ def register_quant_routes(app):
                                 'sample_seconds':lab.sample_seconds,'retention_days':lab.retention_days},
                 'real_execution_enabled':False}
 
+    @app.get('/api/quant/radar/status')
+    def radar_status(x_quant_token: str = Header(None)):
+        authorized(x_quant_token)
+        from quant.lab_config import LabConfig
+        from quant.potential_store import PotentialStore
+        return PotentialStore(LabConfig().directory).summary()
+
     @app.get('/api/quant/paper/status')
     def paper_status(x_quant_token: str = Header(None)):
         authorized(x_quant_token)

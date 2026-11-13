@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { beijingTime } from './officialData'
+import { PotentialRadar } from './PotentialRadar'
 
 const num = (v: any, digits = 2) => typeof v === 'number' && Number.isFinite(v) ? v.toLocaleString('zh-CN', { maximumFractionDigits: digits }) : '—'
 
@@ -24,7 +25,7 @@ export function QuantLab() {
   const reports = h.latest_report
   const eventHistory = data?.event_history || {}, ranking = data?.ranking?.rows || []
   const opening = data?.opening
-  return <section className="card" style={{ padding: 22, marginBottom: 22, lineHeight: 1.8 }}>
+  return <><PotentialRadar /><section className="card" style={{ padding: 22, marginBottom: 22, lineHeight: 1.8 }}>
     <h2>全市场研究与模型 <span className="tag">独立模拟 · 实盘只读</span></h2>
     {error && <p role="alert">{error}</p>}
     {!data ? <p>正在读取采集与模型状态…</p> : <>
@@ -55,5 +56,5 @@ export function QuantLab() {
       {Object.entries(c.blocked || {}).length > 0 && <details><summary>数据未就绪原因</summary>{Object.entries(c.blocked).map(([s, why]) => <p key={s}>{s}：{String(why)}</p>)}</details>}
       <p>模型采用标准化特征、向量原型与逻辑回归，按时间隔离标签窗口。最终晋级使用真实历史盘口和逐笔成交，计入手续费、价差、额外不利滑点、模拟延迟、部分成交和保守资金费。历史结果不保证未来收益；模拟延迟不是交易所真实下单延迟。DeepSeek 用于低频分析，不参与每一帧行情处理。</p>
     </>}
-  </section>
+  </section></>
 }
