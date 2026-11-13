@@ -14,6 +14,7 @@ from .lab_config import LabConfig
 from .lab_store import RealtimeBus
 from .potential_radar import BAR_MS,SCHEMA,candidate,closed_bars,fast_valid,evaluate_path
 from .potential_store import PotentialStore
+from .rest_guard import RestGuard
 
 
 class PublicMarket:
@@ -24,10 +25,13 @@ class PublicMarket:
     def __init__(self,session,budget=12):
         self.session=session;self.maximum=budget;self.remaining=budget
         self.backoff_until=0.;self.next_request=0.;self.requests=0
+        self.rest_guard=RestGuard()
 
     async def get(self,market,path,params=None):
         if market not in self.PATHS or path not in self.PATHS[market]:
             raise ValueError('Radar forbids account endpoints and exchange writes')
+        if self.rest_guard.remaining():
+            raise ValueError('Exchange denial cooldown: enrichment paused')
         if self.remaining<=0 or time.monotonic()<self.backoff_until:
             raise ValueError('Public request budget or backoff active')
         self.remaining-=1
@@ -35,6 +39,9 @@ class PublicMarket:
         self.next_request=time.monotonic()+1
         self.requests+=1
         async with self.session.get(self.BASE[market]+path,params=params) as response:
+            self.rest_guard.observe(response.status,response.headers)
+            if response.status in (403,451):
+                raise ValueError('Exchange gateway denied request: enrichment paused')
             if response.status in (418,429):
                 retry=response.headers.get('Retry-After','60')
                 try:delay=float(retry)

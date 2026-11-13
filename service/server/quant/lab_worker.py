@@ -17,6 +17,7 @@ from .event_lake import EventLake, envelope
 from .market_ranker import MarketRanker
 from .candidate_selection import select_research_candidates
 from .event_labels import EventLabeler, backfill_labels
+from .rest_guard import RestGuard
 
 
 def universe(info):
@@ -83,12 +84,26 @@ class Collector:
         self.event_written = 0
         self.repairs = set()
         self.trade_notices = 0
+        self.rest_guard = RestGuard()
+        self.rest_lock = asyncio.Lock()
+        self.next_rest_call = 0.
+        self.seed_retry_at, self.seed_failures = {}, {}
 
     async def read(self, path, params=None):
-        headers = {'X-MBX-APIKEY':self.cfg.market_data_key} if path=='/fapi/v1/historicalTrades' and self.cfg.market_data_key else {}
-        async with self.session.get('https://fapi.binance.com'+path,params=params,headers=headers) as r:
-            r.raise_for_status()
-            return await r.json()
+        self.rest_guard.check()
+        # One budget for snapshots, universe refresh and trade-gap repair.
+        # A 1000-level snapshot costs 20 weight: <=60/min leaves headroom
+        # beneath the 2400/min limit for account and radar readers on this IP.
+        async with self.rest_lock:
+            self.rest_guard.check()
+            await asyncio.sleep(max(0., self.next_rest_call-time.monotonic()))
+            self.rest_guard.check()
+            self.next_rest_call = time.monotonic()+1
+            headers = {'X-MBX-APIKEY':self.cfg.market_data_key} if path=='/fapi/v1/historicalTrades' and self.cfg.market_data_key else {}
+            async with self.session.get('https://fapi.binance.com'+path,params=params,headers=headers) as r:
+                self.rest_guard.observe(r.status, r.headers)
+                r.raise_for_status()
+                return await r.json()
 
     def record(self, data):
         if not getattr(self,'legacy_raw_enabled',False):
@@ -237,8 +252,14 @@ class Collector:
                     if book.last is None:
                         break
             self.buffers[symbol].clear()
+            self.seed_failures.pop(symbol, None)
+            self.seed_retry_at.pop(symbol, None)
         except Exception as exc:
-            logging.warning('Depth snapshot %s: %s',symbol,type(exc).__name__)
+            failures = self.seed_failures.get(symbol, 0) + 1
+            self.seed_failures[symbol] = failures
+            self.seed_retry_at[symbol] = time.monotonic() + max(
+                min(300, 5 * 2 ** min(failures - 1, 6)), self.rest_guard.remaining())
+            logging.warning('Depth snapshot %s: %s HTTP %s; retry delayed',symbol,type(exc).__name__,getattr(exc,'status',None))
             self.errors += 1
         finally:
             if self.snapshot_tasks.get(symbol) is task:
@@ -316,6 +337,8 @@ class Collector:
                 self.seed_needed(symbol)
 
     def seed_needed(self,symbol):
+        if self.rest_guard.remaining() or time.monotonic() < self.seed_retry_at.get(symbol, 0):
+            return
         if symbol not in self.snapshot_tasks:
             self.buffers[symbol] = deque(maxlen=10000)
             self.snapshot_tasks[symbol] = asyncio.create_task(self.seed(symbol))
@@ -670,6 +693,7 @@ class Collector:
             depth_gap_symbols = sorted(s for s,b in self.books.items()
                                        if getattr(b,'sequence_gap_active',False))
             state = {'status':'collecting','ts':now,'universe_count':len(self.rules),
+                     'rest_cooldown_seconds':math.ceil(self.rest_guard.remaining()),
                      'candidates':list(self.selected),'ready_symbols':[r['symbol'] for r in rows],
                      'observed_symbols':[q['symbol'] for q in quotes],
                      'exit_only_symbols':[q['symbol'] for q in quotes if q['symbol'] not in self.selected],

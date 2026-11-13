@@ -14,6 +14,7 @@ from .strategies import signal
 from .features import indicators
 from .market_stream import MarketStreamMixin
 from .account_stream import AccountStream
+from .rest_guard import RestCooldown
 
 READ_PATHS = {'/fapi/v1/time', '/fapi/v3/account', '/fapi/v3/positionRisk', '/fapi/v1/symbolConfig',
               '/fapi/v1/premiumIndex', '/fapi/v1/klines'}
@@ -23,6 +24,8 @@ class ReadOnlyBinance(Binance):
     def __init__(self, cfg):
         # A paper/testnet execution configuration must not redirect real account reads.
         super().__init__(replace(cfg, mode='live', observation_only=True, enabled=False, live_enabled=False))
+        self._symbol_configs = []
+        self._symbol_config_next = 0.
 
     def request(self, method, path, params=None, signed=False):
         if method != 'GET' or path not in READ_PATHS:
@@ -30,24 +33,36 @@ class ReadOnlyBinance(Binance):
         return super().request(method, path, params, signed)
 
     def symbol_config(self):
-        return self.request('GET', '/fapi/v1/symbolConfig', signed=True)
+        if time.monotonic() < self._symbol_config_next:
+            return self._symbol_configs
+        try:
+            value = self.request('GET', '/fapi/v1/symbolConfig', signed=True)
+            if not isinstance(value, list) or any(not isinstance(r, dict) or 'symbol' not in r for r in value):
+                raise ValueError('Invalid symbol configuration')
+        except Exception:
+            self._symbol_config_next = time.monotonic() + max(60, self.rest_guard.remaining())
+            # Keep unknown leverage unknown; do not silently serve a stale value.
+            self._symbol_configs = []
+            raise
+        self._symbol_configs = value
+        self._symbol_config_next = time.monotonic() + 60
+        return value
 
     def create_listen_key(self):
+        self.rest_guard.check()
         response = self.session.post(self.cfg.base_url + '/fapi/v1/listenKey',
                                      headers={'X-MBX-APIKEY': self.cfg.api_key}, timeout=(5, 12))
-        if response.status_code >= 400:
-            raise ExchangeError(response.status_code)
-        value = response.json().get('listenKey')
+        value = self._decode_response(response).get('listenKey')
         if not value:
             raise RuntimeError('Binance account listenKey missing')
         return value
 
     def keepalive_listen_key(self, listen_key):
+        self.rest_guard.check()
         response = self.session.put(self.cfg.base_url + '/fapi/v1/listenKey',
                                     params={'listenKey': listen_key},
                                     headers={'X-MBX-APIKEY': self.cfg.api_key}, timeout=(5, 12))
-        if response.status_code >= 400:
-            raise ExchangeError(response.status_code)
+        self._decode_response(response)
 
 
 class RealtimeReadOnlyBinance(MarketStreamMixin, ReadOnlyBinance):
@@ -251,13 +266,14 @@ def run(cfg, store):
             if future is None:
                 store.set('ai_advice_job', {'status': 'idle'})
         except Exception as exc:
-            if isinstance(exc, ExchangeError):
+            if isinstance(exc, (ExchangeError, RestCooldown)):
                 error = str(exc)
             else:
                 error = '币安实盘只读同步失败，请检查密钥权限或网络连接'
             previous = store.get('live_account', {})
             store.set('live_account', previous | {'status': 'error', 'error': error, 'checked_at': utcnow(), 'read_only': True})
         store.set('worker', {'status': 'observing' if not error else 'observation_error', 'error': error, 'heartbeat': utcnow(),
+                             'rest_cooldown_seconds': math.ceil(api.rest_guard.remaining()),
                              'market_stream': api.market_stream.snapshot(),
                              'account_stream': api.account_stream.snapshot_status()})
         if not error and live is not None:

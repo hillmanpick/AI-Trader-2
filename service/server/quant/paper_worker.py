@@ -11,6 +11,7 @@ from .notifier import Notifier
 from .paper import RealtimePaperMarket, paper_settings
 from .settings import Settings
 from .store import Store, utcnow
+from .rest_guard import RestCooldown
 
 
 def main():
@@ -53,7 +54,7 @@ def main():
             status = engine.step()
             last_error = None
         except Exception as exc:
-            error = str(exc)[:200] if isinstance(exc, ExchangeError) else '模拟行情或策略处理失败，请检查服务日志与配置'
+            error = str(exc)[:200] if isinstance(exc, (ExchangeError, RestCooldown)) else '模拟行情或策略处理失败，请检查服务日志与配置'
             if error != last_error:
                 logging.warning('%s', error)
                 store.event('模拟运行告警', error)

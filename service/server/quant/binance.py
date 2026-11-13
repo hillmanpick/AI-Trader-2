@@ -7,11 +7,15 @@ from urllib.parse import urlencode
 
 import requests
 
+from .rest_guard import RestGuard
+
 
 class ExchangeError(RuntimeError):
-    def __init__(self, status, code=None):
+    def __init__(self, status, code=None, edge_blocked=False):
         self.status, self.code = status, code
         message = 'Binance region restriction (HTTP 451)' if status == 451 else f'Binance request failed: HTTP {status}, code {code}'
+        if status == 403 and edge_blocked:
+            message = 'Binance REST 被上游网关拒绝（HTTP 403），账户数据暂未同步，正在冷却重试'
         super().__init__(message)
 
 
@@ -28,8 +32,10 @@ class Binance:
         self.offset = 0
         self.rules = {}
         self.last_sync = 0
+        self.rest_guard = RestGuard()
 
     def request(self, method, path, params=None, signed=False):
+        self.rest_guard.check()
         params = dict(params or {})
         headers = {}
         if signed:
@@ -43,10 +49,14 @@ class Binance:
         except requests.RequestException:
             # Do not log exception URLs: signed query strings contain signatures.
             raise RuntimeError('Binance network error; order result may be unknown') from None
+        return self._decode_response(response)
+
+    def _decode_response(self, response):
+        self.rest_guard.observe(response.status_code, response.headers)
         try:
             data = response.json()
         except ValueError:
-            raise ExchangeError(response.status_code) from None
+            raise ExchangeError(response.status_code, edge_blocked=response.status_code == 403) from None
         if response.status_code >= 400:
             raise ExchangeError(response.status_code,data.get('code') if isinstance(data,dict) else None)
         return data
