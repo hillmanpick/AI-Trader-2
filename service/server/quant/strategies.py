@@ -168,6 +168,13 @@ def update_dynamic_exit(position, plan, fee_rate, slippage):
     costs = 2*(fee_rate+slippage)
     if (mark/entry-1)*direction > costs+.001:
         breakeven = entry*(1+direction*costs)
+        if position.get('shortline_version'):
+            from .shortline import protected_exit_price
+            breakeven = protected_exit_price(position,fee_rate,slippage)
+            position['protected_exit_price_estimate'] = breakeven
+            # A cost estimate above the current mark cannot be a resting stop.
+            if (mark-breakeven)*direction <= 0:
+                breakeven = previous
         best = max(best,breakeven) if long else min(best,breakeven)
     position['stop_price'] = best
     position['take_price'] = entry*(1+direction*plan['take_pct'])

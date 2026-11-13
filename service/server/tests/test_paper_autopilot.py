@@ -249,3 +249,71 @@ def test_client_sends_fixed_prefix_no_tools_and_usage(controller):
     assert result['telemetry']['usage']['prompt_cache_hit_rate']==.5
     body=session.__enter__.return_value.post.call_args.kwargs['json']
     assert 'tools' not in body and 'test-ds' not in json.dumps(body)
+
+
+def fast_market(controller):
+    ctl,e,db,lab,future=controller
+    e.cfg=replace(e.cfg,paper_fast_execution=True,paper_slippage=.0003,paper_ai_autopilot_interval=300)
+    row={'symbol':'BTCUSDT','price':100,'ts':int(time.time()*1000),
+         'vector':[.0001,.001,.002,.0002,1,.2,1,.2,10,1.5,0,10,10,5],
+         'meta':{'atr_proxy':.003,'schema':SCHEMA,'quality':True}}
+    lab.row.side_effect=lambda s:dict(row)
+    return ctl,e,db,lab,future,row
+
+
+def test_fast_plan_waits_for_two_distinct_samples_and_is_consumed_once(controller):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision()]});ctl.tick()
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert ctl.signal('BTCUSDT')=='hold'  # Same sample is not a confirmation.
+    row['ts']+=1000
+    assert ctl.signal('BTCUSDT')=='long'
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert db.get('entry_context:BTCUSDT')['shortline_version']=='ai-plan-flow-v1'
+    ctl.pool.submit.assert_called_once()
+
+
+def test_fast_plan_can_wait_without_buying_against_order_flow(controller):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    row['vector'][6]=-1
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision()]});ctl.tick()
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert '盘口' in db.get('signal:BTCUSDT')['reason']
+    row['vector'][6]=1;row['ts']+=1000
+    assert ctl.signal('BTCUSDT')=='hold'
+    row['ts']+=1000
+    assert ctl.signal('BTCUSDT')=='long'
+
+
+def test_fast_plan_must_recheck_latest_direction_and_cannot_reuse_expired_plan(controller):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision()]});ctl.tick()
+    ctl.actions['BTCUSDT'][1]['started']-=120
+    assert ctl.signal('BTCUSDT')=='hold'  # Still valid, waiting second sample.
+    lab.bus.get.side_effect=lambda k:None
+    row['ts']+=1000
+    assert ctl.signal('BTCUSDT')=='hold'
+    ctl.actions['BTCUSDT'][1]['started']-=200
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert '过期' in db.get('signal:BTCUSDT')['reason']
+
+
+def test_fast_plan_respects_symbol_cooldown_and_cost_filtered_sizing(controller):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision()]});ctl.tick()
+    db.set('shortline_cooldown:BTCUSDT',time.time()+120)
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert '冷却' in db.get('signal:BTCUSDT')['reason']
+    db.set('shortline_cooldown:BTCUSDT',0)
+    assert ctl.signal('BTCUSDT')=='hold';row['ts']+=1000
+    assert ctl.signal('BTCUSDT')=='long'
+    e.lab_row=lab.row;e.lab_risk_cap=lambda s,side,cap:(cap,{})
+    e.exchange.liquidity.return_value={'spread_bps':1,'ask_depth':1e8,'bid_depth':1e8,
+        'depth_bps':10,'updated_ms':int(time.time()*1000)}
+    plan=e.entry_profile(100,[],'BTCUSDT','long')
+    assert plan['planned_risk_usdt']<=30+1e-8
+    assert plan['margin']<=e.cfg.paper_margin
+    row['vector'][6]=-1
+    with pytest.raises(ValueError,match='盘口'):
+        e.entry_profile(100,[],'BTCUSDT','long')
+    e.exchange.order.assert_not_called()

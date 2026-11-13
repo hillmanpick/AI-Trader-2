@@ -7,17 +7,21 @@ services:
       QUANT_LIVE_ENABLED: "false"
       QUANT_OBSERVATION_ONLY: "true"
   api:
-    image: ai-trader-quant:rest-guard-20261113
+    image: ai-trader-quant:shortline-20261113
     environment:
       QUANT_REST_GUARD_REDIS_URL: redis://redis:6379/1
       QUANT_PAPER_AI_AUTOPILOT: "true"
       QUANT_PAPER_AI_AUTOPILOT_INTERVAL_SECONDS: "300"
+      QUANT_PAPER_FAST_EXECUTION: "true"
+      QUANT_PAPER_COMPOUND_CAPITAL_USDT: "6000"
   paper-worker:
-    image: ai-trader-quant:rest-guard-20261113
+    image: ai-trader-quant:shortline-20261113
     environment:
       QUANT_REST_GUARD_REDIS_URL: redis://redis:6379/1
       QUANT_PAPER_AI_AUTOPILOT: "true"
       QUANT_PAPER_AI_AUTOPILOT_INTERVAL_SECONDS: "300"
+      QUANT_PAPER_FAST_EXECUTION: "true"
+      QUANT_PAPER_COMPOUND_CAPITAL_USDT: "6000"
   lab-collector:
     image: ai-trader-quant:rest-guard-20261113
     environment:

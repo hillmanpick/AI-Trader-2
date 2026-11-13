@@ -125,6 +125,7 @@ class PaperAutopilot:
         self.pool = ThreadPoolExecutor(max_workers=1,thread_name_prefix='paper-autopilot')
         self.job = None
         self.actions = {}
+        self.confirmations = {}
 
     def tick(self):
         e = self.engine
@@ -228,7 +229,8 @@ class PaperAutopilot:
             'daily_budget':daily,'daily_request_limit':288})
 
     def signal(self,symbol):
-        item = self.actions.pop(symbol,None)
+        fast = self.engine.cfg.paper_fast_execution
+        item = self.actions.get(symbol) if fast else self.actions.pop(symbol,None)
         if not item:
             return 'hold'
         e = self.engine
@@ -236,7 +238,8 @@ class PaperAutopilot:
         row = self.lab.row(symbol)
         p = e.store.get('positions',{}).get(symbol)
         blocked = None
-        if time.time()-ctx['started']>min(45,e.cfg.ai_review_max_age):
+        ttl = min(300,max(60,e.cfg.paper_ai_autopilot_interval)) if fast and d['action'] in ('long','short') else min(45,e.cfg.ai_review_max_age)
+        if time.time()-ctx['started']>ttl:
             blocked = '决策已过期'
         elif position_identity(p) != ctx['positions'].get(symbol):
             blocked = '请求后持仓已变化，等待下一轮'
@@ -250,11 +253,35 @@ class PaperAutopilot:
             blocked = '当前空仓'
         elif d['action'] in ('long','short'):
             potential=ctx['potentials'].get(symbol)
+            if fast:
+                radar = self.lab.bus.get('potential_candidates') or {}
+                potential = next((r for r in radar.get('rows',[]) if r.get('symbol')==symbol),None) if radar.get('schema')=='potential-radar-v1' else None
             side='long_score' if d['action']=='long' else 'short_score'
             other='short_score' if d['action']=='long' else 'long_score'
-            if (not potential or time.time()*1000-potential['ts']>180000
+            if (not potential or not 0<=time.time()*1000-potential['ts']<=180000
                     or potential[side]<20 or potential[side]<=potential[other]):
                 blocked='1-4小时方向筛选不支持该方向或数据已过期'
+        if fast and not blocked and d['action'] in ('long','short'):
+            from .shortline import entry_check, VERSION
+            if time.time() < e.store.get('shortline_cooldown:'+symbol,0):
+                blocked = '该币平仓后冷却中，避免反复付费'
+            else:
+                quality = entry_check(row,d['action'],d,e.cfg)
+                e.store.set('entry_quality:'+symbol,quality | {'at':utcnow()})
+                if not quality['passes']:
+                    blocked = quality['reason']
+                else:
+                    previous = self.confirmations.get(symbol,{})
+                    same = (previous.get('request')==ctx['id'] and previous.get('action')==d['action']
+                            and 0<=row['ts']-previous.get('ts',0)<=10000)
+                    count = previous.get('count',0) if same else 0
+                    if not same or row['ts'] != previous.get('ts'):
+                        count += 1
+                    self.confirmations[symbol] = {'request':ctx['id'],'action':d['action'],'count':count,'ts':row['ts']}
+                    if count < 2:
+                        blocked = '等待第二个独立实时特征样本确认'
+        if fast and blocked and not blocked.startswith('等待第二个'):
+            self.confirmations.pop(symbol,None)
         action = 'hold' if blocked else d['action']
         e.store.set('signal:'+symbol,d | {'action':action,'reason':blocked or d['reason'],
             'at':utcnow(),'source':'deepseek_autopilot','request_id':ctx['id']})
@@ -263,6 +290,13 @@ class PaperAutopilot:
                 'model_approved':False,'exploration':True,'feature_ts':row['ts'],
                 'confidence':d['confidence'],'regime':'microstructure','strategy':'ds_autopilot',
                 'ai_parameters':d,'autopilot_request':ctx['id']})
+            if fast:
+                context = e.store.get('entry_context:'+symbol)
+                context['shortline_version'] = VERSION
+                e.store.set('entry_context:'+symbol,context)
+        if fast and (not blocked or time.time()-ctx['started']>ttl or position_identity(p)!=ctx['positions'].get(symbol)):
+            self.actions.pop(symbol,None)
+            self.confirmations.pop(symbol,None)
         if action == 'update':
             direction = 1 if p['amount']>0 else -1
             candidate = p['mark']*(1-direction*d['stop_loss_pct'])

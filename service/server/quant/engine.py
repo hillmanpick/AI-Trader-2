@@ -67,8 +67,19 @@ class Engine:
                     parameters = self.store.get('entry_context:'+symbol,{}).get('ai_parameters')
                     if not parameters:
                         raise ValueError('Missing fresh DS entry parameters')
-                return microstructure_plan(row,liquidity,policy_for_settings(self.cfg),positions,
-                                           cap,parameters) | {'liquidity':liquidity,'correlation_risk':correlation}
+                policy = policy_for_settings(self.cfg)
+                compound = None
+                if self.cfg.paper_fast_execution:
+                    from .shortline import entry_check, compound_budget, compound_plan
+                    quality = entry_check(row,action,parameters,self.cfg)
+                    if not quality['passes']:
+                        raise ValueError(quality['reason'])
+                    compound = compound_budget(self.cfg,self.store,positions)
+                    self.store.set('shortline_budget',compound | {'at':utcnow()})
+                    policy,parameters,cap = compound_plan(policy,parameters,compound,positions,cap,liquidity)
+                plan = microstructure_plan(row,liquidity,policy,positions,cap,parameters)
+                return plan | {'liquidity':liquidity,'correlation_risk':correlation,
+                               **({'shortline':compound} if compound else {})}
             min_leverage = self.cfg.paper_min_leverage
             max_leverage = (self.cfg.paper_major_max_leverage
                             if symbol in {'BTCUSDT','ETHUSDT'} else self.cfg.paper_max_leverage)

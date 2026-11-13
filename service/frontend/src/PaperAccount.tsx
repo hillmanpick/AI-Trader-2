@@ -52,6 +52,13 @@ export function PaperAccount() {
         <p>累计请求 {fmt(data.autopilot?.requests || 0, 0)} · 今日请求 {fmt(data.autopilot?.daily_budget?.requests || 0, 0)}/{fmt(data.autopilot?.daily_request_limit || 288, 0)} · 累计输入 {fmt(data.autopilot?.usage_total?.prompt_tokens || 0, 0)} tokens · 缓存命中 {fmt(data.autopilot?.usage_total?.prompt_cache_hit_tokens || 0, 0)} · 缓存未命中 {fmt(data.autopilot?.usage_total?.prompt_cache_miss_tokens || 0, 0)} · 最近响应 {fmt(data.autopilot?.telemetry?.elapsed_ms, 0)} 毫秒</p>
         <small>最多每 5 分钟一批、每天最多 288 批；这是新的模拟策略，尚未通过盈利验证；此前成交和盈亏继续保留，实盘只读。</small>
       </div>}
+      {data.config.paper_fast_execution && <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
+        <h3>短线执行与净利润复投 · 模拟验证中</h3>
+        <p>AI 提供最长 5 分钟有效的交易计划，程序等待两个独立盘口特征样本确认方向、订单流和成本；平仓后同币冷却 120 秒。成交频率由有效信号决定。</p>
+        <p>本策略已实现净盈亏 <strong>{signedFmt(data.shortline?.performance?.net ?? 0)} USDT</strong> · 已平仓 {fmt(data.shortline?.performance?.completed ?? 0, 0)} 笔 · 盈利 {fmt(data.shortline?.performance?.wins ?? 0, 0)} 笔 · 手续费 {fmt(data.shortline?.performance?.fees ?? 0)} USDT</p>
+        <p>复投参考资金 {fmt(data.shortline?.budget?.base_capital)} USDT · 当前规模系数 {fmt(data.shortline?.budget?.multiplier, 4)} · 单笔风险预算 {fmt(data.shortline?.budget?.per_trade_risk_usdt)} USDT · 组合风险预算 {fmt(data.shortline?.budget?.portfolio_risk_usdt)} USDT</p>
+        <small>只按本策略已实现净盈亏调整规模，充值和历史策略不计入复投；浮亏会缩小预算。原保证金上限继续生效。这不是毫秒级高频策略，尚无稳定盈利证据；模拟账本目前未计资金费，保本触发价也不能保证跳价后保本。</small>
+      </div>}
       <p>行情通道：{data.worker.market_stream?.status === 'connected' ? 'WebSocket 实时行情已收到' : data.worker.market_stream?.status === 'no_market_events' ? 'WebSocket 暂无行情帧，使用 REST 回退并重试' : data.worker.market_stream?.status === 'reconnecting' ? `WebSocket 重连中（${data.worker.market_stream.reconnects || 0} 次），使用 REST 回退` : '等待 WebSocket · REST 回退可用'} · 新鲜标记价 {data.worker.market_stream?.fresh_marks || 0}/{data.config.symbols.length}</p>
       {data.worker.error && <p role="alert" style={{ color: '#edac65' }}>{data.worker.error}</p>}
       <p><strong>新仓模拟杠杆：{data.config.paper_dynamic_leverage ? `${data.config.paper_min_leverage}–${data.config.paper_max_leverage} 倍动态计算（BTC/ETH 上限 ${data.config.paper_major_max_leverage} 倍）` : formatLeverage(data.config.leverage)}</strong> · 当前虚拟钱包 {fmt(data.account.wallet)} USDT · 新仓每仓保证金{data.config.paper_margin_is_ceiling || data.config.paper_exploration_mode ? '上限' : ''} {fmt(data.config.paper_margin || data.config.order_notional / data.config.leverage)} USDT · 总保证金上限 {fmt(data.config.paper_max_margin || data.config.max_notional / data.config.leverage)} USDT · 最多 {data.config.max_positions} 个仓位</p>

@@ -111,6 +111,8 @@ def register_quant_routes(app):
                 }
         except (OSError, ValueError, TypeError):
             performance = None
+        from quant.shortline import compound_budget, STATS_KEY
+        shortline_budget = compound_budget(paper,db,db.get('positions',{})) if paper.paper_fast_execution else {}
         return {'source':'existing_paper', 'ledger':'existing_paper_account', 'real_execution_enabled':False,
                 'config':db.get('config',paper.public()), 'worker':worker, 'stale':age_seconds(worker.get('heartbeat')) > 180,
                 'paused':db.get('paused',False), 'daily_loss_blocked':db.get('daily_loss_blocked',False),
@@ -121,6 +123,9 @@ def register_quant_routes(app):
                 'reflection':StrategyReflector(db, paper).status(),
                 'lab_gate':db.get('lab_gate',{}),
                 'autopilot':db.get('autopilot',{}),
+                'shortline':{'budget':shortline_budget,
+                             'performance':db.get(STATS_KEY,{}),
+                             'profitability_proven':False},
                 'execution_statistics':db.get('execution_statistics',{}),
                 'execution_closed_fills':db.get('execution_closed_fills',[])[-30:],
                 'sizing':{s:db.get(f'sizing:{s}') for s in db.get('config',paper.public()).get('symbols',[])},

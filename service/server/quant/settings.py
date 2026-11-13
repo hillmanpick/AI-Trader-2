@@ -64,6 +64,8 @@ class Settings:
     paper_exploration_mode: bool = False
     paper_ai_autopilot: bool = False
     paper_ai_autopilot_interval: int = 60
+    paper_fast_execution: bool = False
+    paper_compound_capital: float = 6000.
     paper_summary_only: bool = False
     reflection_enabled: bool = field(default_factory=lambda: os.getenv('QUANT_REFLECTION_ENABLED', 'false').lower() == 'true')
     reflection_min_trades: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_MIN_TRADES', '12')))
@@ -105,6 +107,10 @@ class Settings:
             raise ValueError('Paper AI autopilot requires credential-free lab mode')
         if not 60 <= self.paper_ai_autopilot_interval <= 3600:
             raise ValueError('Paper AI autopilot interval must be 60 to 3600 seconds')
+        if self.paper_fast_execution and (not self.paper_ai_autopilot or not self.paper_dynamic_leverage
+                or not self.paper_dynamic_exits or not math.isfinite(self.paper_compound_capital)
+                or self.paper_compound_capital <= 0):
+            raise ValueError('Shortline execution requires paper AI, dynamic exits and positive compound capital')
         if self.paper_entry_filter not in {'shadow','enforce'}:
             raise ValueError('Paper entry filter must be shadow/enforce')
         if self.reflection_min_trades < 5 or self.reflection_window < self.reflection_min_trades or self.reflection_interval_trades < 1:
@@ -196,6 +202,8 @@ class Settings:
             'paper_exploration_mode': self.paper_exploration_mode,
             'paper_ai_autopilot': self.paper_ai_autopilot,
             'paper_ai_autopilot_interval_seconds': self.paper_ai_autopilot_interval,
+            'paper_fast_execution': self.paper_fast_execution,
+            'paper_compound_capital': self.paper_compound_capital,
             'paper_summary_only': self.paper_summary_only,
             'reflection_enabled': self.reflection_enabled and self.mode == 'paper',
             'reflection_min_trades': self.reflection_min_trades,

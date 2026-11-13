@@ -88,6 +88,26 @@ class PaperExecution:
                            'quantity':qty,'gross_pnl':pnl,'fee':fee,'reason':order.get('reason'),
                            'model_version':old.get('model_version')})
             put('execution_closed_fills',closed[-1000:])
+            if old.get('shortline_version'):
+                from .shortline import STATS_KEY, VERSION
+                if old['shortline_version'] == VERSION:
+                    stats = get(STATS_KEY,{'version':VERSION,'net':0.,'gross':0.,'fees':0.,
+                                           'completed':0,'wins':0,'peak_net':0.,'started_at':utc(fill['at_ns'])})
+                    entry_fee = old.get('entry_fee',0)*qty/abs(old['amount'])
+                    net = pnl-entry_fee-fee
+                    stats['net'] += net
+                    stats['gross'] += pnl
+                    stats['fees'] += entry_fee+fee
+                    stats['peak_net'] = max(stats['peak_net'],stats['net'])
+                    cycle_net = old.get('shortline_cycle_net',0.)+net
+                    if order['symbol'] in positions:
+                        positions[order['symbol']]['shortline_cycle_net'] = cycle_net
+                    else:
+                        stats['completed'] += 1
+                        stats['wins'] += int(cycle_net>0)
+                        put('shortline_cooldown:'+order['symbol'],fill['at_ns']/1e9+120)
+                    stats['updated_at'] = utc(fill['at_ns'])
+                    put(STATS_KEY,stats)
         else:
             if old and old['amount']*amount<=0:
                 raise ValueError('Paper entry fill cannot reverse a position')
@@ -103,6 +123,8 @@ class PaperExecution:
                         'exploration':bool(context.get('exploration')),'model_approved':bool(context.get('model_approved')),
                         'feature_ts':context.get('feature_ts'),'strategy_version':e.reflection.active().get('version',1),
                         'entry_regime':context.get('regime','microstructure'),'mae_pct':0,'mfe_pct':0}
+            if not old and context.get('shortline_version'):
+                p['shortline_version'] = context['shortline_version']
             if context.get('ai_parameters') and not old:
                 p['ds_hold_seconds'] = context['ai_parameters']['hold_seconds']
                 p['autopilot_request'] = context.get('autopilot_request')
