@@ -1,8 +1,8 @@
 services:
   api:
-    image: ai-trader-quant:potential-radar-20261113-v1
+    image: ai-trader-quant:potential-radar-ai-20261113-v1
   potential-radar:
-    image: ai-trader-quant:potential-radar-20261113-v1
+    image: ai-trader-quant:potential-radar-ai-20261113-v1
     pull_policy: never
     env_file: .env
     environment:
@@ -28,3 +28,23 @@ services:
         condition: service_healthy
     mem_limit: 220m
     cpus: 0.25
+  radar-ai:
+    image: ai-trader-quant:potential-radar-ai-20261113-v1
+    pull_policy: never
+    environment:
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-flash}
+      QUANT_LAB_DIR: ${QUANT_LAB_DIR:-/data/lab}
+      QUANT_RADAR_AI_ENABLED: "true"
+      QUANT_ENABLED: "false"
+      QUANT_LIVE_ENABLED: "false"
+      QUANT_AI_ENABLED: "false"
+      QUANT_PAPER_AI_AUTOPILOT: "false"
+      QUANT_OBSERVATION_ONLY: "true"
+    command: [python, -m, quant.potential_ai]
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
+    mem_limit: 96m
+    cpus: 0.15

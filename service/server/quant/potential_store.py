@@ -87,7 +87,11 @@ class PotentialStore:
             recent=[json.loads(r['body'])|{'outcome':json.loads(r['outcome'])} for r in c.execute(
                 'SELECT body,outcome FROM radar_observations WHERE outcome IS NOT NULL ORDER BY ts DESC LIMIT 20')]
         state=self.get('status',{})
+        ai=self.get('ai_analysis',{'status':'disabled'})
+        ai=ai|{'stale':not 0<=now_ms-ai.get('data_ts',0)<=1200000,
+               'daily':self.get('ai_budget',{})}
         return state|{'training':self.get('training',{}),'stale':not 0<=now_ms-state.get('ts',0)<=180000,
+            'ai_analysis':ai,
             'observations':counts[0],'pending':counts[1] or 0,'valid_outcomes':counts[2] or 0,
             'invalid_outcomes':counts[3] or 0,'up_first':counts[4] or 0,'first_observation_ms':counts[5],
             'last_observation_ms':counts[6],'recent_outcomes':recent,

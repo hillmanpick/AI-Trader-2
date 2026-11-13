@@ -166,7 +166,7 @@ class Radar:
             'history_waiting':waiting[:30],'requests':self.client.requests,'requests_per_minute_limit':self.client.maximum,
             'errors':self.errors,'evaluated_this_pass':evaluated,'model':model_state,
             'mode':'validated_probability' if self.model else 'explainable_rule_score',
-            'note':'观察雷达，不能保证暴涨；当前排名不下单、不调用付费 AI；仅覆盖币安已上市 USDT 永续',
+            'note':'观察雷达，不能保证暴涨；当前排名不下单；AI分析使用独立低频任务；仅覆盖币安已上市 USDT 永续',
             'label_sample':'hourly observations of enriched leaders and rotating controls; not a complete market census'}
         self.store.put('status',status);self.store.prune(stamp)
 
