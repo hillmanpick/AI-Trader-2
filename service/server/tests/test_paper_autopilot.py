@@ -156,6 +156,37 @@ def test_daily_request_budget_persists_across_autopilot_instances(controller,mon
     assert db.get('autopilot')['daily_request_limit']==288
 
 
+def test_no_horizon_candidates_and_no_positions_does_not_spend_ai_request(controller):
+    ctl,e,db,lab,future=controller
+    lab.bus.get.return_value=None;lab.bus.get.side_effect=None
+    ctl.tick()
+    ctl.pool.submit.assert_not_called()
+    assert db.get('autopilot')['status']=='waiting_data'
+    assert db.get('autopilot:daily_budget') is None
+
+
+def test_matching_short_direction_passes_the_same_paper_only_checks(controller):
+    ctl,e,db,lab,future=controller
+    ctl.tick()
+    future.set_result({'status':'complete','decisions':[decision(action='short')]})
+    ctl.tick()
+    ctl.actions['BTCUSDT'][1]['potentials']['BTCUSDT'].update(long_score=5,short_score=45)
+    assert ctl.signal('BTCUSDT')=='short'
+    assert db.get('entry_context:BTCUSDT')['ai_parameters']['action']=='short'
+    e.exchange.order.assert_not_called()
+
+
+def test_portfolio_batch_never_exceeds_twelve_and_prioritizes_held_contracts(controller):
+    ctl,e,db,lab,future=controller
+    e.cfg=replace(e.cfg,symbols=tuple(f'COIN{i:02}USDT' for i in range(30)))
+    db.set('positions',{'COIN29USDT':{'opened_at':'2026-11-13T00:00:00+00:00','amount':1,'entry':100}})
+    ctl.tick()
+    payload=ctl.pool.submit.call_args.args[1]
+    assert len(payload['current']['markets'])==12
+    assert payload['current']['markets'][0]['symbol']=='COIN29USDT'
+    assert 'COIN29USDT' in payload['current']['positions']
+
+
 def test_response_consumed_once_even_when_request_errors(controller):
     ctl,e,db,lab,future=controller
     ctl.tick()
