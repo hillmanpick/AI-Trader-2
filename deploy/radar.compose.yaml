@@ -1,18 +1,18 @@
 services:
   api:
-    image: ai-trader-quant:dual-horizon-ai-20261113-v1
+    image: ai-trader-quant:dual-horizon-ai-20261113-v2
     environment:
       QUANT_PAPER_AI_AUTOPILOT: "true"
       QUANT_PAPER_AI_AUTOPILOT_INTERVAL_SECONDS: "300"
   paper-worker:
-    image: ai-trader-quant:dual-horizon-ai-20261113-v1
+    image: ai-trader-quant:dual-horizon-ai-20261113-v2
     environment:
       QUANT_PAPER_AI_AUTOPILOT: "true"
       QUANT_PAPER_AI_AUTOPILOT_INTERVAL_SECONDS: "300"
   lab-collector:
-    image: ai-trader-quant:dual-horizon-ai-20261113-v1
+    image: ai-trader-quant:dual-horizon-ai-20261113-v2
   potential-radar:
-    image: ai-trader-quant:dual-horizon-ai-20261113-v1
+    image: ai-trader-quant:dual-horizon-ai-20261113-v2
     pull_policy: never
     env_file: .env
     environment:
@@ -39,7 +39,7 @@ services:
     mem_limit: 220m
     cpus: 0.25
   radar-ai:
-    image: ai-trader-quant:dual-horizon-ai-20261113-v1
+    image: ai-trader-quant:dual-horizon-ai-20261113-v2
     pull_policy: never
     environment:
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}

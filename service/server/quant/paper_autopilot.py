@@ -182,7 +182,7 @@ class PaperAutopilot:
                         and all(type(item.get(k)) in (int,float) and math.isfinite(item[k])
                                 for k in ('long_score','short_score','return_5m','return_15m','return_1h','return_4h'))):
                     potentials[item['symbol']]=item
-        for s in symbols[:40]:
+        for s in symbols[:12]:
             try:
                 if not self.lab.gate(s):
                     continue

@@ -738,6 +738,9 @@ class Collector:
                 if paper_path.exists():
                     held = tuple(Store(str(paper_path)).get('positions',{}))
                 self.held = held
+                # Keep held symbols in feature generation as well as depth;
+                # AI must still be able to close/update them after pool rotation.
+                selected = tuple(dict.fromkeys(selected+held))
                 now_ms = int(time.time()*1000)
                 if selected != self.selected:
                     self.prepare_selected(selected,now_ms)
