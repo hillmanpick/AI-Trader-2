@@ -10,7 +10,7 @@ def policy_for_settings(cfg, horizon_seconds=300):
         'paper_major_max_leverage',
         'paper_depth_participation','paper_depth_range_bps','paper_max_spread_bps',
         'max_positions','max_notional','paper_exploration_mode',
-        'paper_fast_execution','paper_compound_capital','paper_ds_authority')} | {'horizon_seconds':horizon_seconds,
+        'paper_fast_execution','paper_compound_capital','paper_compound_risk_fraction','paper_ds_authority')} | {'horizon_seconds':horizon_seconds,
             'entry_plan_schema':'shared-microstructure-v3-quote-budget',
             'shortline_schema':'ai-plan-flow-v1' if cfg.paper_fast_execution else None,
             'major_symbol_max_leverage':cfg.paper_major_max_leverage,

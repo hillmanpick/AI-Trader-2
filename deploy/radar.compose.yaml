@@ -7,7 +7,7 @@ services:
       QUANT_LIVE_ENABLED: "false"
       QUANT_OBSERVATION_ONLY: "true"
   api:
-    image: ai-trader-quant:ds-authority-20261113
+    image: ai-trader-quant:exit-repair-20261114
     environment:
       QUANT_REST_GUARD_REDIS_URL: redis://redis:6379/1
       QUANT_PAPER_AI_AUTOPILOT: "true"
@@ -15,8 +15,9 @@ services:
       QUANT_PAPER_FAST_EXECUTION: "true"
       QUANT_PAPER_DS_AUTHORITY: "true"
       QUANT_PAPER_COMPOUND_CAPITAL_USDT: "6000"
+      QUANT_PAPER_COMPOUND_RISK_FRACTION: "0.001"
   paper-worker:
-    image: ai-trader-quant:ds-authority-20261113
+    image: ai-trader-quant:exit-repair-20261114
     environment:
       QUANT_REST_GUARD_REDIS_URL: redis://redis:6379/1
       QUANT_PAPER_AI_AUTOPILOT: "true"
@@ -24,6 +25,7 @@ services:
       QUANT_PAPER_FAST_EXECUTION: "true"
       QUANT_PAPER_DS_AUTHORITY: "true"
       QUANT_PAPER_COMPOUND_CAPITAL_USDT: "6000"
+      QUANT_PAPER_COMPOUND_RISK_FRACTION: "0.001"
   lab-collector:
     image: ai-trader-quant:rest-guard-20261113
     environment:

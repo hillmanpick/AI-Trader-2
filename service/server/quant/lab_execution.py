@@ -93,6 +93,26 @@ class LabExecution:
                             e.cfg.paper_max_margin*e.cfg.paper_risk_fraction,
                             int(time.time()*1000),self.cfg.horizon_seconds)
 
+    def management_row(self,symbol):
+        """An existing position never disappears when entry features warm up."""
+        try:
+            row = self.row(symbol)
+            return row | {'management_only':True}
+        except (ValueError,KeyError,TypeError):
+            pass
+        price,stamp = None,None
+        try:
+            quote = self.engine.exchange.liquidity(symbol)
+            if (0<=time.time()*1000-quote['updated_ms']<=2000
+                    and math.isfinite(quote['bid']) and math.isfinite(quote['ask'])
+                    and 0<quote['bid']<quote['ask']):
+                price,stamp = (quote['bid']+quote['ask'])/2,quote['updated_ms']
+        except Exception:
+            pass
+        return {'symbol':symbol,'price':price,'ts':stamp,'vector':None,
+                'meta':{'quality':False,'entry_allowed':False,'atr_proxy':None},
+                'management_only':True}
+
     def gate(self,symbol):
         self.refresh()
         if not self.cfg.enabled or not self.status.get('ready') or (not self.model and not getattr(self,'autopilot',None)):
@@ -113,6 +133,8 @@ class LabExecution:
 
     def signal(self,symbol):
         e = self.engine
+        if getattr(self,'autopilot',None) and symbol in e.store.get('positions',{}):
+            return self.autopilot.signal(symbol)
         if not self.gate(symbol):
             e.store.set(f'signal:{symbol}',{'action':'hold','reason':self.status.get('reason') if not self.status.get('ready') else '实时特征或盘口尚未就绪',
                                           'at':utcnow(),'source':'deepseek_autopilot' if self.autopilot else 'numeric_model'})

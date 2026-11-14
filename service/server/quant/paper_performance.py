@@ -56,6 +56,7 @@ def paper_performance(store, now=None, *, include_trades=False):
                     'gross_pnl':old['cycle_gross'],'cost_usdt':old['cycle_cost'],
                     'net_pnl':old['cycle_net'],'exit_reason':o.get('reason'),
                     'model_version':context.get('model_version'),
+                    'decision_authority':'deepseek' if context.get('ds_authority') else 'legacy',
                     'strategy_version':context.get('strategy_version',1),
                     'regime':context.get('regime','unknown')})
                 positions.pop(o['symbol'])
@@ -82,3 +83,22 @@ def paper_performance(store, now=None, *, include_trades=False):
     if include_trades:
         result['completed_positions'] = completed
     return result
+
+
+def decision_feedback(store,limit=100):
+    """Causal realized outcomes only; a win fraction is not a prediction."""
+    report = paper_performance(store,include_trades=True)
+    trades = [t for t in (report or {}).get('completed_positions',[])
+              if t.get('decision_authority')=='deepseek'][-limit:]
+    def summarize(rows):
+        wins = [t['net_pnl'] for t in rows if t['net_pnl']>0]
+        losses = [t['net_pnl'] for t in rows if t['net_pnl']<=0]
+        return {'trades':len(rows),'wins':len(wins),'gross':sum(t['gross_pnl'] for t in rows),
+                'fees':sum(t['cost_usdt'] for t in rows),'net':sum(t['net_pnl'] for t in rows),
+                'average_win':sum(wins)/len(wins) if wins else None,
+                'average_loss':sum(losses)/len(losses) if losses else None}
+    return {'scope':'last completed DS-authority positions; descriptive, not validated forecasts',
+            'total':summarize(trades),
+            'by_side':{side:summarize([t for t in trades if t['side']==side]) for side in ('long','short')},
+            'by_exit':{reason:summarize([t for t in trades if t['exit_reason']==reason])
+                       for reason in sorted({t['exit_reason'] for t in trades})}}

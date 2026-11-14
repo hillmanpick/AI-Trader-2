@@ -416,6 +416,11 @@ class Engine:
         positions = self.store.get('positions',{})
         old = positions.get(symbol)
         execution = getattr(self,'paper_execution',None)
+        if execution and action=='close' and old:
+            return self.paper_order(symbol,-old['amount'],price,reason,key)
+        if execution and action!='close' and execution.exits():
+            self.store.set(f'sizing:{symbol}',{'status':'blocked','reason':'先完成已触发的模拟平仓，再处理新仓','at':utcnow()})
+            return
         if execution and (execution.pending(symbol) or (action!='close' and any(not o.get('closing') for o in execution.journal.orders(active=True)))):
             return
         if action == 'close':
@@ -516,7 +521,8 @@ class Engine:
         positions = self.store.get('positions',{})
         marks = {}
         unavailable = []
-        for s in self.cfg.symbols:
+        managed_symbols = tuple(dict.fromkeys(self.cfg.symbols+tuple(positions)))
+        for s in managed_symbols:
             try:
                 marks[s] = self.exchange.mark(s)
             except Exception:
@@ -525,6 +531,11 @@ class Engine:
         if any(not math.isfinite(price) or price <= 0 for price in marks.values()):
             raise ValueError('Invalid mark price')
         for symbol,p in list(positions.items()):
+            if self.cfg.mode=='paper' and self.cfg.strategy=='lab_model' and getattr(self,'paper_execution',None):
+                from .lab_config import LabConfig
+                opened = datetime.fromisoformat(p['opened_at']).timestamp()
+                if time.time()-opened>=p.get('ds_hold_seconds',LabConfig().horizon_seconds):
+                    self.paper_execution.request_exit(symbol,'ds_horizon' if p.get('ds_authority') else 'model_horizon')
             if symbol not in marks:
                 continue
             p['mark'] = marks[symbol]
@@ -547,14 +558,23 @@ class Engine:
             equity = self.store.get('account')['equity']
         loss_blocked = self.daily_blocked(equity)
         self.store.set('daily_loss_blocked',loss_blocked)
-        for symbol in self.cfg.symbols:
+        for symbol in managed_symbols:
             if symbol not in marks:
+                p = self.store.get('positions',{}).get(symbol)
+                if p and self.cfg.mode=='paper' and self.cfg.paper_ai_autopilot:
+                    action = getattr(self,'lab_signal',lambda s:'hold')(symbol)
+                    if action=='close':
+                        self.execute(symbol,'close',p['mark'],'deepseek_autopilot',utcnow())
                 continue
             price = marks[symbol]
             if not math.isfinite(price) or price <= 0:
                 raise ValueError('Invalid mark price')
             p = self.store.get('positions',{}).get(symbol)
             if p:
+                execution = getattr(self,'paper_execution',None)
+                if execution and execution.exit_intent(symbol):
+                    # A triggered exit survives a rebound and incomplete features.
+                    continue
                 if self.cfg.mode == 'paper' and p.get('dynamic_exits'):
                     plan = p['exit_plan'] if self.cfg.strategy == 'lab_model' else self.store.get(f'volatility:{symbol}', p['exit_plan'])
                     exit_reason = update_dynamic_exit(p,plan,self.cfg.fee_rate,self.cfg.paper_slippage)

@@ -67,6 +67,7 @@ class Settings:
     paper_fast_execution: bool = False
     paper_ds_authority: bool = False
     paper_compound_capital: float = 6000.
+    paper_compound_risk_fraction: float = .005
     paper_summary_only: bool = False
     reflection_enabled: bool = field(default_factory=lambda: os.getenv('QUANT_REFLECTION_ENABLED', 'false').lower() == 'true')
     reflection_min_trades: int = field(default_factory=lambda: int(os.getenv('QUANT_REFLECTION_MIN_TRADES', '12')))
@@ -114,6 +115,8 @@ class Settings:
             raise ValueError('Shortline execution requires paper AI, dynamic exits and positive compound capital')
         if self.paper_ds_authority and (not self.paper_ai_autopilot or not self.paper_dynamic_exits):
             raise ValueError('DS authority requires credential-free paper AI mode and protective exits')
+        if not math.isfinite(self.paper_compound_risk_fraction) or not 0<self.paper_compound_risk_fraction<=.005:
+            raise ValueError('Compound per-trade risk fraction must be positive and at most 0.005')
         if self.paper_entry_filter not in {'shadow','enforce'}:
             raise ValueError('Paper entry filter must be shadow/enforce')
         if self.reflection_min_trades < 5 or self.reflection_window < self.reflection_min_trades or self.reflection_interval_trades < 1:
@@ -208,6 +211,7 @@ class Settings:
             'paper_fast_execution': self.paper_fast_execution,
             'paper_ds_authority': self.paper_ds_authority,
             'paper_compound_capital': self.paper_compound_capital,
+            'paper_compound_risk_fraction': self.paper_compound_risk_fraction,
             'paper_summary_only': self.paper_summary_only,
             'reflection_enabled': self.reflection_enabled and self.mode == 'paper',
             'reflection_min_trades': self.reflection_min_trades,

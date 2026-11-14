@@ -384,3 +384,63 @@ def test_fast_plan_respects_symbol_cooldown_and_cost_filtered_sizing(controller)
     with pytest.raises(ValueError,match='盘口'):
         e.entry_profile(100,[],'BTCUSDT','long')
     e.exchange.order.assert_not_called()
+
+
+def test_held_contract_without_features_is_included_and_can_close(controller):
+    ctl,e,db,lab,future=controller
+    e.cfg=replace(e.cfg,paper_ds_authority=True)
+    db.set('positions',{'BTCUSDT':{'opened_at':'held','amount':1,'entry':100,'mark':100}})
+    lab.gate.return_value=False
+    lab.row.side_effect=ValueError('feature gap')
+    lab.management_row.return_value={'symbol':'BTCUSDT','price':None,'ts':None,'vector':None,
+        'meta':{'quality':False,'atr_proxy':None},'management_only':True}
+    ctl.tick()
+    payload=ctl.pool.submit.call_args.args[1]
+    assert len(payload['current']['markets'])==1
+    assert payload['current']['markets'][0]['features'] is None
+    assert 'BTCUSDT' in payload['current']['positions']
+    assert payload['current']['realized_feedback']['total']['trades']==0
+    future.set_result({'status':'complete','decisions':[decision(action='close',confidence=.1)]})
+    ctl.tick()
+    assert ctl.signal('BTCUSDT')=='close'
+    assert ctl.signal('BTCUSDT')=='hold'
+
+
+def test_held_update_rejects_missing_price_without_removing_existing_stop(controller):
+    ctl,e,db,lab,future=controller
+    e.cfg=replace(e.cfg,paper_ds_authority=True)
+    p={'opened_at':'held','amount':1,'entry':100,'mark':100,'stop_price':99,
+       'stop_pct':.01,'exit_plan':{'stop_pct':.01,'take_pct':.02}}
+    db.set('positions',{'BTCUSDT':p})
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision(action='update')]});ctl.tick()
+    lab.row.side_effect=ValueError('feature gap')
+    lab.management_row.return_value={'price':None,'ts':None}
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert db.get('positions')['BTCUSDT']['stop_price']==99
+    assert '新鲜报价' in db.get('signal:BTCUSDT')['reason']
+
+
+def test_pending_exit_cannot_be_canceled_by_ai_update(controller):
+    ctl,e,db,lab,future=controller
+    e.cfg=replace(e.cfg,paper_ds_authority=True)
+    p={'opened_at':'held','amount':1,'entry':100,'mark':100,'stop_price':99,
+       'stop_pct':.01,'exit_plan':{'stop_pct':.01,'take_pct':.02}}
+    db.set('positions',{'BTCUSDT':p})
+    e.paper_execution=MagicMock()
+    e.paper_execution.exits.return_value={'BTCUSDT':{'reason':'ds_stop_loss'}}
+    e.paper_execution.exit_intent.return_value={'reason':'ds_stop_loss'}
+    ctl.tick();future.set_result({'status':'complete','decisions':[decision(action='update')]});ctl.tick()
+    assert ctl.signal('BTCUSDT')=='hold'
+    assert db.get('positions')['BTCUSDT']['stop_price']==99
+    assert '已触发退出' in db.get('signal:BTCUSDT')['reason']
+
+
+def test_ds_receives_explicit_round_trip_cost_not_just_fee_rate(controller):
+    ctl,e,db,lab,future,row=fast_market(controller)
+    e.cfg=replace(e.cfg,paper_ds_authority=True)
+    ctl.tick()
+    payload=ctl.pool.submit.call_args.args[1]
+    costs=payload['current']['markets'][0]['execution_cost']
+    assert costs['break_even_move_pct']==pytest.approx(.0017)
+    assert not costs['funding_and_jump_risk_included']
+    assert 'by_side' in payload['current']['realized_feedback']

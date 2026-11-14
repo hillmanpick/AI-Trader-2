@@ -37,6 +37,7 @@ export function PaperAccount() {
     {error && <p role="alert">{error}</p>}
     {!data ? <p>正在读取模拟账户…</p> : <>
       <p>状态：{data.stale ? '进程心跳过期' : names[data.worker.status] || data.worker.status} · 最后心跳 {beijingTime(data.worker.heartbeat)}（UTC+8）</p>
+      {Object.entries(data.pending_exits || {}).map(([symbol, raw]) => { const exit = raw as any; return <p role="status" key={symbol}><strong>{symbol} 持续平仓中</strong> · 原因 {exit.reason} · 已尝试 {exit.attempts} 次。盘口恢复后按剩余仓位继续减仓，订单过期不会撤销退出。</p> })}
       <div className="paper-performance-grid" aria-label="模拟盘收益摘要">
         <div className="paper-performance-card paper-performance-balance"><span>总余额</span><strong>{fmt(data.performance?.total_balance ?? data.account.equity)} USDT</strong><small>权益，包含当前浮动盈亏</small></div>
         <div className="paper-performance-card"><span>今日盈利</span><strong className={(data.performance?.today_net || 0) >= 0 ? 'is-profit' : 'is-loss'}>{signedFmt(data.performance?.today_net)} USDT</strong><small>北京时间 00:00 起</small></div>
@@ -51,6 +52,7 @@ export function PaperAccount() {
         {data.autopilot?.reason && <p>{data.autopilot.reason}</p>}
         <p>累计请求 {fmt(data.autopilot?.requests || 0, 0)} · 今日请求 {fmt(data.autopilot?.daily_budget?.requests || 0, 0)}/{fmt(data.autopilot?.daily_request_limit || 288, 0)} · 累计输入 {fmt(data.autopilot?.usage_total?.prompt_tokens || 0, 0)} tokens · 缓存命中 {fmt(data.autopilot?.usage_total?.prompt_cache_hit_tokens || 0, 0)} · 缓存未命中 {fmt(data.autopilot?.usage_total?.prompt_cache_miss_tokens || 0, 0)} · 最近响应 {fmt(data.autopilot?.telemetry?.elapsed_ms, 0)} 毫秒</p>
         <small>最多每 5 分钟一批、每天最多 288 批；这是新的模拟策略，尚未通过盈利验证；此前成交和盈亏继续保留，实盘只读。</small>
+        {data.autopilot_input?.realized_feedback?.by_side && <p>近期 DS 已平仓反馈：做多 {fmt(data.autopilot_input.realized_feedback.by_side.long.trades, 0)} 笔 / 净盈亏 {signedFmt(data.autopilot_input.realized_feedback.by_side.long.net)} U；做空 {fmt(data.autopilot_input.realized_feedback.by_side.short.trades, 0)} 笔 / 净盈亏 {signedFmt(data.autopilot_input.realized_feedback.by_side.short.net)} U。样本结果不代表未来胜率。</p>}
       </div>}
       {data.config.paper_fast_execution && <div style={{ border: '1px solid var(--border-color)', borderRadius: 10, padding: 16, marginBottom: 16 }}>
         <h3>短线执行与净利润复投 · 模拟验证中</h3>

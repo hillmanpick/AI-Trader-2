@@ -31,6 +31,12 @@ DIRECT_SYSTEM = SYSTEM.replace(
     '你拥有候选合约范围内的最终交易决策权。potential 是可选参考，缺失或评分方向冲突不构成程序否决；可根据现有真实数据独立选择做多、做空或观望，不能编造缺失数据。程序不以趋势、订单流方向、置信度阈值、双样本确认或收益成本比再次审核你的方向。'
 ) + '\n你的止损、止盈和持仓期限由程序执行，程序不额外自动移动止损或保本平仓；你可用 update 收紧止损和调整止盈、期限。复投与硬性资金、流动性和风险上限继续有效。'
 
+DIRECT_SYSTEM += '''
+management_only=true 的合约是已有持仓，只能 hold/close/update；features=null 或 price=null 表示数据缺失，不能补造。已有持仓必须逐轮评估，即使没有完整开仓特征；数据不足时可 close，只有新鲜报价才能 update。pending_exits 是已触发且不可撤回的退出意图，程序将持续减仓直至清空。
+execution_cost 给出当前估算的往返手续费、滑点及点差，均为价格比例，尚未含资金费与跳价；break_even_move_pct 是费用门槛，不是预测。先比较预计价格空间与完整往返成本，再决定开仓；提高杠杆不会改善扣费后的价格优势。
+5s/30s/60s 的动量和买卖流只反映短时观察，不能直接外推为未来15-30分钟趋势。持仓期限应与实际可见的信号尺度和失效条件一致；慢周期背景缺失要明确不确定性，不能编造5m/15m走势。已有仓位接近期限时，根据当前证据主动 close 或 update，不应机械等到期才重新判断。
+realized_feedback 分别列出多空方向、手续费和退出结果，只是样本统计，不能把少量盈利样本当作已验证优势。对多空使用同等证据标准，不因单次放量默认追多，不为挽回历史亏损增加频率或杠杆。'''
+
 
 def validate_decisions(value, symbols):
     if not isinstance(value, dict) or set(value) != {'summary','decisions'}:
@@ -176,7 +182,7 @@ class PaperAutopilot:
             return
         # Batch fresh candidates, including managed positions; never queue per-symbol calls.
         positions = e.store.get('positions',{})
-        symbols = sorted(e.cfg.symbols, key=lambda s:(s not in positions,s))
+        symbols = sorted(set(e.cfg.symbols)|set(positions), key=lambda s:(s not in positions,s))
         markets,rows = [],{}
         community = e.store.get('community',{}) if e.cfg.community_enabled else {}
         radar=self.lab.bus.get('potential_candidates') if hasattr(self.lab.bus,'get') else None
@@ -190,13 +196,26 @@ class PaperAutopilot:
                     potentials[item['symbol']]=item
         for s in symbols[:12]:
             try:
-                if not self.lab.gate(s):
-                    continue
-                r = self.lab.row(s)
+                if s in positions:
+                    try:
+                        r = self.lab.row(s) | {'management_only':True}
+                    except (ValueError,KeyError,TypeError):
+                        r = self.lab.management_row(s)
+                else:
+                    if not self.lab.gate(s):
+                        continue
+                    r = self.lab.row(s)
                 rows[s] = r
+                features = dict(zip(FEATURES,r['vector'])) if r.get('vector') is not None else None
+                spread = r['meta'].get('spread_bps',(features or {}).get('spread_bps'))
+                cost = None if spread is None else 2*(e.cfg.fee_rate+e.cfg.paper_slippage)+spread/10000
                 markets.append({'symbol':s,'price':r['price'],'ts':r['ts'],
-                    'features':dict(zip(FEATURES,r['vector'])),
+                    'features':features,'management_only':s in positions,
                     'atr_proxy':r['meta']['atr_proxy'],
+                    'execution_cost':{'round_trip_fee_pct':2*e.cfg.fee_rate,
+                        'round_trip_slippage_pct':2*e.cfg.paper_slippage,
+                        'spread_bps':spread,'break_even_move_pct':cost,
+                        'funding_and_jump_risk_included':False},
                     'potential':potentials.get(s),
                     'community':community_context(community,s)})
             except (ValueError,KeyError,TypeError):
@@ -221,12 +240,25 @@ class PaperAutopilot:
             'current':{'markets':markets,'positions':{s:p for s,p in positions.items() if s in allowed},
                        'account':e.store.get('account',{}),'paused_entries':e.store.get('paused',False),
                        'feedback':{k:report[k] for k in ('net_pnl','window_trades','win_rate','by_symbol') if k in report}}}
+        if e.cfg.paper_ds_authority:
+            from .paper_performance import decision_feedback
+            payload['current']['realized_feedback'] = decision_feedback(e.store)
+            payload['current']['positions'] = {s:{k:p.get(k) for k in (
+                'amount','entry','mark','pnl','initial_margin','entry_fee','leverage',
+                'stop_price','take_price','opened_at','ds_hold_seconds','mae_pct','mfe_pct')}
+                for s,p in positions.items() if s in allowed}
+            execution = getattr(e,'paper_execution',None)
+            payload['current']['pending_exits'] = execution.exits() if execution else {}
         if e.cfg.paper_fast_execution:
             from .shortline import compound_budget
             payload['current']['reinvestment_budget'] = compound_budget(e.cfg,e.store,positions)
         context = {'id':uuid.uuid4().hex,'started':now,'started_at':utcnow(),'rows':rows,
                    'positions':{s:position_identity(positions.get(s)) for s in allowed},
                    'potentials':potentials}
+        e.store.set('autopilot:input_summary',{'at':utcnow(),'request_id':context['id'],
+            'symbols':sorted(allowed),'managed_symbols':sorted(positions),
+            'feature_missing':[m['symbol'] for m in markets if m['features'] is None],
+            'realized_feedback':payload['current'].get('realized_feedback')})
         e.store.set('autopilot:last_request',now)
         daily['requests']+=1
         e.store.set('autopilot:daily_budget',daily)
@@ -245,8 +277,15 @@ class PaperAutopilot:
             return 'hold'
         e = self.engine
         d,ctx = item
-        row = self.lab.row(symbol)
         p = e.store.get('positions',{}).get(symbol)
+        row = None
+        if d['action'] in ('long','short'):
+            row = self.lab.row(symbol)
+        elif d['action']=='update' and p:
+            try:
+                row = self.lab.row(symbol)
+            except (ValueError,KeyError,TypeError):
+                row = self.lab.management_row(symbol)
         blocked = None
         ttl = min(300,max(60,e.cfg.paper_ai_autopilot_interval)) if fast and d['action'] in ('long','short') else min(45,e.cfg.ai_review_max_age)
         if time.time()-ctx['started']>ttl:
@@ -261,6 +300,14 @@ class PaperAutopilot:
             blocked = '已有仓位或已暂停新仓'
         elif d['action'] in ('close','update') and not p:
             blocked = '当前空仓'
+        elif d['action'] in ('long','short') and ctx['rows'][symbol].get('management_only'):
+            blocked = '该合约仅供已有持仓管理，不能使用降级数据开仓'
+        elif d['action']=='update' and (not row or type(row.get('price')) not in (int,float)
+                or not math.isfinite(row['price']) or row['price']<=0
+                or not 0<=time.time()*1000-row.get('ts',0)<=10000):
+            blocked = '保护参数更新需要新鲜报价；原有保护与平仓意图继续有效'
+        elif p and getattr(e,'paper_execution',None) and e.paper_execution.exit_intent(symbol):
+            blocked = '已触发退出，持续减仓直至清空'
         elif d['action'] in ('long','short') and not direct:
             potential=ctx['potentials'].get(symbol)
             if fast:
@@ -313,12 +360,13 @@ class PaperAutopilot:
             self.confirmations.pop(symbol,None)
         if action == 'update':
             direction = 1 if p['amount']>0 else -1
-            candidate = p['mark']*(1-direction*d['stop_loss_pct'])
+            candidate = row['price']*(1-direction*d['stop_loss_pct'])
             old_stop = p.get('stop_price',p['entry']*(1-direction*p['stop_pct']))
             p['stop_price'] = max(old_stop,candidate) if direction>0 else min(old_stop,candidate)
             p['stop_pct'] = min(p['stop_pct'],d['stop_loss_pct'])
             p['exit_plan'] = p['exit_plan'] | {'stop_pct':p['stop_pct'],'take_pct':d['take_profit_pct']}
             p['take_price'] = p['entry']*(1+direction*d['take_profit_pct'])
+            p['take_pct'] = d['take_profit_pct']
             p['ds_hold_seconds'] = d['hold_seconds']
             if direct:
                 p['ds_authority'] = True

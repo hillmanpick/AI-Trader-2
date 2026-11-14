@@ -51,11 +51,12 @@ def compound_budget(cfg, store, positions):
     drawdown = max(0., (peak - usable) / peak)
     # Reduce continuously under drawdown; never increase size after a loss.
     multiplier = min(2., usable / capital) * max(.25, 1 - 5 * drawdown)
+    per_trade = cfg.paper_compound_risk_fraction
     return {'version': VERSION, 'base_capital': capital, 'realized_net': net,
             'open_loss_and_entry_fees': open_loss, 'usable_capital': usable,
             'multiplier': multiplier, 'drawdown': drawdown,
-            'per_trade_risk_usdt': min(usable * .005, capital * .005 * multiplier),
-            'portfolio_risk_usdt': min(usable * .015, capital * .015 * multiplier),
+            'per_trade_risk_usdt': min(usable * per_trade, capital * per_trade * multiplier),
+            'portfolio_risk_usdt': min(usable * per_trade * 3, capital * per_trade * 3 * multiplier),
             'source': 'settled_policy_pnl_excluding_deposits', 'profitability_proven': False}
 
 

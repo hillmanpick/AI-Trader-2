@@ -123,6 +123,9 @@ def register_quant_routes(app):
                 'reflection':StrategyReflector(db, paper).status(),
                 'lab_gate':db.get('lab_gate',{}),
                 'autopilot':db.get('autopilot',{}),
+                'autopilot_input':db.get('autopilot:input_summary',{}),
+                'pending_exits':{s:db.get('paper_exit:'+s) for s in db.get('positions',{})
+                                 if db.get('paper_exit:'+s)},
                 'shortline':{'budget':shortline_budget,
                              'performance':db.get(STATS_KEY,{}),
                              'profitability_proven':False},

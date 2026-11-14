@@ -47,10 +47,14 @@ def main():
             if cfg.community_enabled:
                 store.set('community', source.get('community', {}))
             if lab:
-                lab.refresh()
                 engine.paper_execution.tick()
-                if lab.autopilot:
-                    lab.autopilot.tick()
+                try:
+                    lab.refresh()
+                    if lab.autopilot:
+                        lab.autopilot.tick()
+                except Exception:
+                    # Entry analysis outages cannot interrupt existing protection.
+                    logging.warning('Paper entry analysis unavailable; protection continues')
             status = engine.step()
             last_error = None
         except Exception as exc:

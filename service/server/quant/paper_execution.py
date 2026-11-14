@@ -25,6 +25,76 @@ class PaperExecution:
                                      participation=engine.cfg.paper_depth_participation,on_fill=self.apply_fill,
                                      slippage=engine.cfg.paper_slippage)
         self.reflection_synced = False
+        self.recover_exits()
+
+    def exits(self):
+        with self.engine.store.connect() as c:
+            return {r[0].split(':',1)[1]:json.loads(r[1]) for r in
+                    c.execute("SELECT key,value FROM kv WHERE key LIKE 'paper_exit:%'")}
+
+    def exit_intent(self,symbol):
+        return self.engine.store.get('paper_exit:'+symbol)
+
+    def request_exit(self,symbol,reason):
+        """Latch the decision before checking depth or an in-flight order."""
+        p = self.engine.store.get('positions',{}).get(symbol)
+        if not p:
+            return
+        current = self.exit_intent(symbol)
+        identity = [p['opened_at'],1 if p['amount']>0 else -1]
+        if current and current['position_id']==identity:
+            if reason=='paper_liquidation' and current['reason']!=reason:
+                current['reason'] = reason
+                self.engine.store.set('paper_exit:'+symbol,current)
+            return current
+        current = {'position_id':identity,'reason':reason,'requested_ns':time.time_ns(),
+                   'attempts':0,'last_attempt_ns':0,'status':'waiting_depth'}
+        self.engine.store.set('paper_exit:'+symbol,current)
+        return current
+
+    def recover_exits(self):
+        """Upgrade failed closes without changing settled orders or fills."""
+        positions = self.engine.store.get('positions',{})
+        if not positions:
+            return
+        orders = self.journal.orders()
+        for symbol,p in positions.items():
+            opened = int(datetime.fromisoformat(p['opened_at']).timestamp()*1e9)
+            previous = [o for o in orders if o['symbol']==symbol and o.get('closing')
+                        and o['submitted_ns']>=opened and o['side']*p['amount']<0]
+            if previous:
+                first = min(previous,key=lambda o:o['submitted_ns'])
+                self.request_exit(symbol,first.get('reason','recovered_exit'))
+
+    def retry_exits(self,now):
+        positions = self.engine.store.get('positions',{})
+        for symbol,intent in self.exits().items():
+            p = positions.get(symbol)
+            if not p or intent['position_id']!=[p['opened_at'],1 if p['amount']>0 else -1]:
+                with self.engine.store.connect() as c:
+                    c.execute('DELETE FROM kv WHERE key=?',('paper_exit:'+symbol,))
+                continue
+            if self.pending(symbol) or now-intent['last_attempt_ns']<1000000000:
+                continue
+            try:
+                raw = self.bus.get('book:'+symbol)
+                if not raw or not 0<=now//1000000-raw['updated_ms']<=2000:
+                    continue
+                book = DepthBook()
+                book.seed(raw,raw['updated_ms'])
+                if not book.bids or not book.asks or max(book.bids)>=min(book.asks):
+                    continue
+                if intent.get('last_book_revision')==book.last:
+                    continue
+            except Exception:
+                continue
+            intent.update(attempts=intent['attempts']+1,last_attempt_ns=now,
+                          last_book_revision=book.last,status='closing')
+            self.engine.store.set('paper_exit:'+symbol,intent)
+            oid = self._submit(symbol,-p['amount'],p['mark'],intent['reason'],
+                               'exit:'+str(intent['requested_ns'])+':'+str(intent['attempts']),p)
+            intent['order_id'] = oid
+            self.engine.store.set('paper_exit:'+symbol,intent)
 
     def sync_reflection(self):
         from .paper_performance import paper_performance
@@ -42,6 +112,16 @@ class PaperExecution:
         e = self.engine
         positions = e.store.get('positions',{})
         existing = positions.get(symbol)
+        if existing:
+            if existing['amount']*amount>=0:
+                raise ValueError('Paper exit must reduce the existing position')
+            self.request_exit(symbol,reason)
+            self.retry_exits(time.time_ns())
+            return (self.exit_intent(symbol) or {}).get('order_id')
+        return self._submit(symbol,amount,price,reason,key,existing)
+
+    def _submit(self,symbol,amount,price,reason,key,existing):
+        e = self.engine
         if self.pending(symbol):
             return
         closing = bool(existing)
@@ -78,6 +158,7 @@ class PaperExecution:
             remaining = old['amount']+amount
             if abs(remaining)<max(1e-10,abs(old['amount'])*1e-10):
                 del positions[order['symbol']]
+                c.execute('DELETE FROM kv WHERE key=?',('paper_exit:'+order['symbol'],))
             else:
                 factor = abs(remaining/old['amount'])
                 positions[order['symbol']] = old | {'amount':remaining,'initial_margin':old['initial_margin']*factor,
@@ -182,10 +263,11 @@ class PaperExecution:
     def tick(self):
         if not self.reflection_synced:
             self.sync_reflection()
+        now = time.time_ns()
+        self.retry_exits(now)
         orders = self.journal.orders(active=True)
         if not orders:
             return
-        now = time.time_ns()
         books = {}
         for symbol in {o['symbol'] for o in orders}:
             try:

@@ -54,6 +54,7 @@ def paper_settings(base):
                   paper_fast_execution=os.getenv('QUANT_PAPER_FAST_EXECUTION','false').lower()=='true',
                   paper_ds_authority=os.getenv('QUANT_PAPER_DS_AUTHORITY','false').lower()=='true',
                   paper_compound_capital=float(os.getenv('QUANT_PAPER_COMPOUND_CAPITAL_USDT','6000')),
+                  paper_compound_risk_fraction=float(os.getenv('QUANT_PAPER_COMPOUND_RISK_FRACTION','.005')),
                   paper_summary_only=os.getenv('QUANT_PAPER_MAIL_SUMMARY_ONLY','true').lower() == 'true',
                   reflection_enabled=os.getenv('QUANT_PAPER_REFLECTION_ENABLED','true').lower() == 'true',
                   reflection_min_trades=int(os.getenv('QUANT_PAPER_REFLECTION_MIN_TRADES', str(base.reflection_min_trades))),
