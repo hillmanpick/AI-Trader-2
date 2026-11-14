@@ -12,7 +12,8 @@ import requests
 
 from .ai_review import usage_telemetry
 from .lab_features import FEATURES
-from .prompt_context import compact_json, community_context
+from .prompt_context import community_context
+from .paper_prompt import build_messages, recent_usage
 from .store import utcnow
 
 
@@ -94,12 +95,13 @@ class DeepSeekAutopilot:
         if url.scheme != 'https' or not url.hostname or url.username or url.password or url.query or url.fragment:
             return failure('invalid_url')
         try:
+            messages,prompt_stats=build_messages(payload,DIRECT_SYSTEM if self.cfg.paper_ds_authority else SYSTEM)
+            telemetry.update(prompt_stats)
             with requests.Session() as session:
                 session.trust_env = False
                 with session.post(self.cfg.deepseek_base_url.rstrip('/')+'/chat/completions',
                     headers={'Authorization':'Bearer '+self.cfg.deepseek_api_key},
-                    json={'model':self.cfg.deepseek_model,'messages':[
-                        {'role':'system','content':DIRECT_SYSTEM if self.cfg.paper_ds_authority else SYSTEM},{'role':'user','content':compact_json(payload)}],
+                    json={'model':self.cfg.deepseek_model,'messages':messages,
                         'thinking':{'type':'disabled'},'response_format':{'type':'json_object'},
                         'temperature':0,'max_tokens':2048},
                     timeout=(4,30),allow_redirects=False,stream=True) as response:
@@ -162,6 +164,13 @@ class PaperAutopilot:
                 if type(v) is int:
                     totals[k] = totals.get(k,0)+v
             status['usage_total'] = totals
+            telemetry=result.get('telemetry',{})
+            recent=e.store.get('autopilot:usage_recent',[])
+            if telemetry.get('usage'):
+                recent=(recent+[{'at':status['at'],'prompt_schema':telemetry.get('prompt_schema','legacy'),
+                                 'usage':telemetry['usage']}])[-24:]
+                e.store.set('autopilot:usage_recent',recent)
+            status['cache_recent']=recent_usage(recent,telemetry.get('prompt_schema','legacy'))
             status['requests'] = prior.get('requests',0)+1
             e.store.set('autopilot',status)
             for d in result.get('decisions',[]):

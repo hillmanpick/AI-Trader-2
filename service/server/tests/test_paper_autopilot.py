@@ -251,6 +251,23 @@ def test_client_sends_fixed_prefix_no_tools_and_usage(controller):
     assert 'tools' not in body and 'test-ds' not in json.dumps(body)
 
 
+def test_recent_cache_window_survives_controller_restart_without_resetting_totals(controller):
+    from quant.paper_prompt import SCHEMA
+    ctl,e,db,lab,future=controller
+    db.set('autopilot',{'requests':100,'usage_total':{'prompt_tokens':90000,
+        'prompt_cache_hit_tokens':10000,'prompt_cache_miss_tokens':80000}})
+    db.set('autopilot:usage_recent',[{'at':'prior','prompt_schema':SCHEMA,
+        'usage':{'prompt_tokens':1000,'prompt_cache_hit_tokens':600,'prompt_cache_miss_tokens':400}}])
+    ctl.tick()
+    future.set_result({'status':'complete','decisions':[],'telemetry':{'prompt_schema':SCHEMA,
+        'usage':{'prompt_tokens':2000,'prompt_cache_hit_tokens':1000,'prompt_cache_miss_tokens':1000}}})
+    ctl.tick();status=db.get('autopilot')
+    assert status['usage_total']['prompt_tokens']==92000 and status['requests']==101
+    assert status['cache_recent']['calls']==2
+    assert status['cache_recent']['prompt_cache_hit_rate']==pytest.approx(1600/3000)
+    assert len(db.get('autopilot:usage_recent'))==2
+
+
 def fast_market(controller):
     ctl,e,db,lab,future=controller
     e.cfg=replace(e.cfg,paper_fast_execution=True,paper_slippage=.0003,paper_ai_autopilot_interval=300)
