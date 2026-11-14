@@ -84,6 +84,15 @@ confounds comparison against the old-window mean. Later calls are needed to
 measure prefix warming and normal live-input variation; do not treat the first
 call as a controlled billing-savings estimate.
 
+The second scheduled call completed at 17:18:34 Asia/Shanghai: nine candidates,
+4,452 input tokens, 2,304 hit and 2,148 missed (51.75%). Its fixed-prefix hash
+was identical to the first call (`3bc29e21c2e763ba7227ce51`). Both calls returned
+valid decisions. Together they had 8,376 input tokens, 3,072 hit, 5,304 missed:
+weighted hit rate 36.68%, mean input 4,188 and mean miss 2,652 tokens per call.
+This demonstrates reuse after the layout change; two varying-candidate calls
+still cannot establish a lasting hit rate or exact currency savings. At the
+17:19:31 check the original ledger still had 2,892 orders and 13,752 fills.
+
 To roll back, restore prior code/config/UI and recreate only API/paper-worker with
 the exit-repair image. Do not restore the database backup over later trades.
 
