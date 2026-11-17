@@ -36,7 +36,9 @@ DIRECT_SYSTEM += '''
 management_only=true 的合约是已有持仓，只能 hold/close/update；features=null 或 price=null 表示数据缺失，不能补造。已有持仓必须逐轮评估，即使没有完整开仓特征；数据不足时可 close，只有新鲜报价才能 update。pending_exits 是已触发且不可撤回的退出意图，程序将持续减仓直至清空。
 execution_cost 给出当前估算的往返手续费、滑点及点差，均为价格比例，尚未含资金费与跳价；break_even_move_pct 是费用门槛，不是预测。先比较预计价格空间与完整往返成本，再决定开仓；提高杠杆不会改善扣费后的价格优势。
 5s/30s/60s 的动量和买卖流只反映短时观察，不能直接外推为未来15-30分钟趋势。持仓期限应与实际可见的信号尺度和失效条件一致；慢周期背景缺失要明确不确定性，不能编造5m/15m走势。已有仓位接近期限时，根据当前证据主动 close 或 update，不应机械等到期才重新判断。
-realized_feedback 分别列出多空方向、手续费和退出结果，只是样本统计，不能把少量盈利样本当作已验证优势。对多空使用同等证据标准，不因单次放量默认追多，不为挽回历史亏损增加频率或杠杆。'''
+realized_feedback 分别列出多空方向、手续费和退出结果，只是样本统计，不能把少量盈利样本当作已验证优势。对多空使用同等证据标准，不因单次放量默认追多，不为挽回历史亏损增加频率或杠杆。
+
+当前目标是模拟盘积累真实成交与退出样本，未通过样本外验证不是额外的开仓否决条件。每轮先横向比较全部 current.markets，优先找1-4小时有方向背景、5-15分钟仍有空间、5-60秒订单流没有明显反向的候选；多空对称判断。若最高排名候选的预期空间足以覆盖往返成本且短线条件仍成立，应直接给出 long 或 short，不要因为其它币没有机会而把整轮都写成 hold；最多选择两个最强的新仓，其余币可省略。没有符合条件的候选时才全部观望。新仓通常持有1-15分钟，信号失效或反向时及时退出，不要为了提高成交数而忽略成本或风险。'''
 
 
 def validate_decisions(value, symbols):
@@ -131,6 +133,23 @@ def position_identity(p):
     return {k:p.get(k) for k in ('opened_at','amount','entry')} if p else None
 
 
+def prioritize_candidates(symbols, positions, ranking, radar_rows, limit=12):
+    allowed = set(symbols) | set(positions)
+    held = sorted(set(positions) & allowed)
+    potential_score = {}
+    for row in radar_rows:
+        symbol = row.get('symbol')
+        scores = (row.get('long_score'), row.get('short_score'))
+        if symbol in allowed and all(type(v) in (int,float) and math.isfinite(v) for v in scores):
+            potential_score[symbol] = max(scores)
+    market_score = {row.get('symbol'):row.get('score') for row in ranking
+                    if row.get('symbol') in allowed and row.get('ready') and row.get('eligible')
+                    and type(row.get('score')) in (int,float) and math.isfinite(row['score'])}
+    remainder = sorted(allowed-set(held), key=lambda symbol:(
+        -potential_score.get(symbol,-1), -market_score.get(symbol,-1), symbol))
+    return tuple((held+remainder)[:max(limit,len(held))])
+
+
 class PaperAutopilot:
     def __init__(self, engine, lab):
         self.engine,self.lab = engine,lab
@@ -179,7 +198,7 @@ class PaperAutopilot:
             return
         if not e.cfg.enabled or not e.ready:
             return
-        interval=max(300,e.cfg.paper_ai_autopilot_interval)
+        interval=max(60,e.cfg.paper_ai_autopilot_interval)
         if now-float(e.store.get('autopilot:last_request',0))<interval:
             return
         day=datetime.now(timezone.utc).strftime('%Y-%m-%d')
@@ -191,14 +210,20 @@ class PaperAutopilot:
             return
         # Batch fresh candidates, including managed positions; never queue per-symbol calls.
         positions = e.store.get('positions',{})
-        symbols = sorted(set(e.cfg.symbols)|set(positions), key=lambda s:(s not in positions,s))
+        symbols = set(e.cfg.symbols)|set(positions)
         markets,rows = [],{}
         community = e.store.get('community',{}) if e.cfg.community_enabled else {}
         radar=self.lab.bus.get('potential_candidates') if hasattr(self.lab.bus,'get') else None
+        radar_rows = radar.get('rows',[]) if (isinstance(radar,dict)
+            and radar.get('schema')=='potential-radar-v1'
+            and 0<=time.time()*1000-radar.get('ts',0)<=180000) else []
+        ranking_state=self.lab.bus.get('ranking') if hasattr(self.lab.bus,'get') else None
+        ranking_rows=ranking_state.get('rows',[]) if (isinstance(ranking_state,dict)
+            and 0<=time.time()*1000-ranking_state.get('ts',0)<=15000) else []
+        symbols=prioritize_candidates(symbols,positions,ranking_rows,radar_rows)
         potentials={}
-        if (isinstance(radar,dict) and radar.get('schema')=='potential-radar-v1'
-                and 0<=time.time()*1000-radar.get('ts',0)<=180000):
-            for item in radar.get('rows',[]):
+        if radar_rows:
+            for item in radar_rows:
                 if (item.get('symbol') in symbols and 0<=time.time()*1000-item.get('ts',0)<=180000
                         and all(type(item.get(k)) in (int,float) and math.isfinite(item[k])
                                 for k in ('long_score','short_score','return_5m','return_15m','return_1h','return_4h'))):

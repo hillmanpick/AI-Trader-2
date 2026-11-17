@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from quant.engine import Engine
 from quant.lab_features import FEATURES,SCHEMA
-from quant.paper_autopilot import DeepSeekAutopilot,PaperAutopilot,position_identity,validate_decisions
+from quant.paper_autopilot import DeepSeekAutopilot,PaperAutopilot,position_identity,prioritize_candidates,validate_decisions
 from quant.settings import Settings
 from quant.store import Store
 
@@ -67,6 +67,16 @@ def test_duplicate_symbols_rejected():
         validate_decisions({'summary':'test','decisions':[decision(),decision()]},{'BTCUSDT','ETHUSDT'})
 
 
+def test_candidates_prioritize_positions_then_radar_and_all_market_rank():
+    ordered=prioritize_candidates(
+        ('ZUSDT','AUSDT','CUSDT','BUSDT','DUSDT'), {'DUSDT':{}},
+        [{'symbol':'CUSDT','ready':True,'eligible':True,'score':.9},
+         {'symbol':'ZUSDT','ready':True,'eligible':True,'score':.8}],
+        [{'symbol':'AUSDT','long_score':90,'short_score':5},
+         {'symbol':'BUSDT','long_score':5,'short_score':80}], limit=4)
+    assert ordered==('DUSDT','AUSDT','BUSDT','CUSDT')
+
+
 def test_one_portfolio_call_per_interval_no_queue_and_no_replay(controller):
     ctl,e,db,lab,future=controller
     ctl.tick()
@@ -86,6 +96,13 @@ def test_one_portfolio_call_per_interval_no_queue_and_no_replay(controller):
     ctl.tick()
     ctl.pool.submit.assert_called_once()
     assert db.get('autopilot')['requests']==1
+
+
+def test_autopilot_can_scan_after_one_minute(controller):
+    ctl,e,db,lab,future=controller
+    db.set('autopilot:last_request',time.time()-61)
+    ctl.tick()
+    ctl.pool.submit.assert_called_once()
 
 
 @pytest.mark.parametrize('mode',['expired','position_changed','price_changed','paused','low_confidence'])
