@@ -32,4 +32,14 @@ preserves the market scanner's ranking when building its portfolio request.
 
 ## Deployment
 
-Release tag and post-deploy sample are recorded after rollout.
+Built and deployed as `ai-trader-quant:paper-mover-scan-20261117-r3`.
+Recreated only API and paper-worker. The paper AI autopilot, DS authority,
+dynamic exits, and 60-second decision interval are enabled; live execution is
+disabled and the paper worker has no Binance API credentials. The existing
+SQLite ledger was backed up before rollout and kept in place.
+
+At 2026-11-17 10:11 Asia/Shanghai, API health was green and the paper worker was
+running. The latest DS batch evaluated nine fresh candidates and chose to hold;
+there were no open positions at that check. Decisions are recorded as paper
+exploration and do not imply a validated or profitable model. An earlier
+sample had no fresh quote and now skips the AI request entirely.
