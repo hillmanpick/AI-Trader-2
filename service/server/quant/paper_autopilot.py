@@ -263,6 +263,13 @@ class PaperAutopilot:
             e.store.set('autopilot',e.store.get('autopilot',{}) | {
                 'status':'waiting_data','reason':'等待新鲜候选盘口与订单流特征','checked_at':utcnow()})
             return
+        if not any(type(m.get('price')) in (int,float) and math.isfinite(m['price']) and m['price']>0
+                   and type(m.get('ts')) is int and 0<=time.time()*1000-m['ts']<=2000
+                   for m in markets):
+            e.store.set('autopilot',e.store.get('autopilot',{}) | {
+                'status':'waiting_data','reason':'没有新鲜报价可供方向判断；保护与退出由本地模拟执行器继续处理',
+                'checked_at':utcnow()})
+            return
         if not e.cfg.paper_ds_authority and not positions and not any(m.get('potential') for m in markets):
             e.store.set('autopilot',e.store.get('autopilot',{})|{'status':'waiting_data',
                 'reason':'等待1–4小时多空候选与实时盘口重合，暂不花费AI请求','checked_at':utcnow()})

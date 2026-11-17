@@ -8,6 +8,8 @@ preserves the market scanner's ranking when building its portfolio request.
 
 - Lower the autopilot's hard minimum decision interval from 300 seconds to
   60 seconds. The configured daily request ceiling remains 288.
+- Skip a DeepSeek request when every candidate and managed position lacks a
+  fresh usable quote. Local stop, target and pending-exit handling continues.
 - Keep every open paper position first, then order eligible candidates by the
   fresh potential radar's stronger long/short score and the all-market flow
   ranking. The AI still sees no more than twelve candidates per request.
@@ -23,8 +25,8 @@ preserves the market scanner's ranking when building its portfolio request.
 
 ## Validation
 
-- `test_paper_autopilot.py`: 58 passed.
-- Full backend suite: 561 passed, 2 skipped.
+- `test_paper_autopilot.py`: 59 passed.
+- Full backend suite: 563 passed, 2 skipped.
 - The prompt prefix changes, so provider-side cache reuse may need to warm up
   again. Daily maximum AI requests are unchanged.
 
