@@ -12,7 +12,7 @@ import pytest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from quant.engine import Engine
 from quant.lab_features import FEATURES,SCHEMA
-from quant.paper_autopilot import DeepSeekAutopilot,PaperAutopilot,position_identity,prioritize_candidates,validate_decisions
+from quant.paper_autopilot import DIRECT_SYSTEM,DeepSeekAutopilot,PaperAutopilot,position_identity,prioritize_candidates,validate_decisions
 from quant.settings import Settings
 from quant.store import Store
 
@@ -75,6 +75,12 @@ def test_candidates_prioritize_positions_then_radar_and_all_market_rank():
         [{'symbol':'AUSDT','long_score':90,'short_score':5},
          {'symbol':'BUSDT','long_score':5,'short_score':80}], limit=4)
     assert ordered==('DUSDT','AUSDT','BUSDT','CUSDT')
+
+
+def test_ds_paper_prompt_allows_exploratory_entries_without_ignoring_costs():
+    assert '没有扣费后优势就 hold' not in DIRECT_SYSTEM
+    assert '至少两项独立方向证据一致' in DIRECT_SYSTEM
+    assert '成本必须进入盈亏评估' in DIRECT_SYSTEM
 
 
 def test_one_portfolio_call_per_interval_no_queue_and_no_replay(controller):
