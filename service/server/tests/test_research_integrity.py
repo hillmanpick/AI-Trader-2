@@ -79,6 +79,23 @@ def test_exit_observations_fill_feature_gaps_without_entering_training(tmp_path)
     assert exported==rows and not labels
 
 
+def test_market_history_scans_timestamp_indexes_without_temp_sort(tmp_path):
+    db=LabStore(tmp_path)
+    with db.connect() as c:
+        sample_plan=' '.join(str(row) for row in c.execute('''EXPLAIN QUERY PLAN
+            SELECT symbol,ts,price,vector,meta FROM samples
+            WHERE ts>=? AND ts<? ORDER BY ts''',(0,1000)))
+        quote_plan=' '.join(str(row) for row in c.execute('''EXPLAIN QUERY PLAN
+            SELECT q.symbol,q.ts,q.price,NULL,q.meta FROM execution_quotes q
+            WHERE q.ts>=? AND q.ts<? AND NOT EXISTS (
+                SELECT 1 FROM samples s WHERE s.symbol=q.symbol AND s.ts=q.ts)
+            ORDER BY q.ts''',(0,1000)))
+    assert 'sample_time' in sample_plan
+    assert 'execution_quote_time' in quote_plan
+    assert 'TEMP B-TREE' not in sample_plan.upper()
+    assert 'TEMP B-TREE' not in quote_plan.upper()
+
+
 def test_exit_only_quote_cancels_pending_entry_and_never_creates_one():
     rows=[quote(0),quote(5000),quote(10000)]
     for r in rows[1:]:r['meta']['entry_allowed']=False
@@ -137,6 +154,22 @@ def test_forward_trial_readiness_preserves_failed_validation_as_warning(tmp_path
     assert not paper_readiness(paper,lab,model,{},state,False,False,100001)['entry_ready']
     blocked=paper_readiness(replace(paper,paper_exploration_mode=False),lab,model,{},state,True,False,100001)
     assert not blocked['entry_ready'] and blocked['blockers'][0]['code']=='trial_not_authorized'
+
+
+def test_systematic_trial_readiness_allows_only_paper_frontier_without_oos(tmp_path):
+    from dataclasses import replace
+    from quant.lab_config import LabConfig
+    from quant.opening_readiness import paper_readiness
+    paper=Settings(enabled=True,strategy='lab_model',paper_lab_required=True,
+        paper_quant_system=True,paper_quant_exploration=True)
+    lab=LabConfig(enabled=True,directory=str(tmp_path))
+    state={'ts':100000,'ready_symbols':['BTCUSDT']}
+    result=paper_readiness(paper,lab,{'ready':False,'reason':'报告缺失'}, {},state,True,False,100001)
+    assert result['entry_ready'] and not result['validated_entry_ready']
+    assert result['mode']=='systematic_forward_trial'
+    assert result['validation_warnings'][0]['code']=='systematic_trial_unvalidated'
+    assert not paper_readiness(replace(paper,enabled=False),lab,{}, {},state,True,False,100001)['entry_ready']
+    assert not paper_readiness(paper,lab,{}, {},state,False,False,100001)['entry_ready']
 
 
 def test_bounded_training_score_cache_matches_uncached_decisions_for_all_thresholds():

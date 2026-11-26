@@ -53,6 +53,9 @@ def paper_settings(base):
                   paper_ai_autopilot_interval=int(os.getenv('QUANT_PAPER_AI_AUTOPILOT_INTERVAL_SECONDS','60')),
                   paper_fast_execution=os.getenv('QUANT_PAPER_FAST_EXECUTION','false').lower()=='true',
                   paper_ds_authority=os.getenv('QUANT_PAPER_DS_AUTHORITY','false').lower()=='true',
+                  paper_quant_system=os.getenv('QUANT_PAPER_SYSTEMATIC','false').lower()=='true',
+                  paper_quant_exploration=os.getenv('QUANT_PAPER_SYSTEMATIC_EXPLORATION','false').lower()=='true',
+                  paper_unrestricted_positions=os.getenv('QUANT_PAPER_UNRESTRICTED_POSITIONS','false').lower()=='true',
                   paper_compound_capital=float(os.getenv('QUANT_PAPER_COMPOUND_CAPITAL_USDT','6000')),
                   paper_compound_risk_fraction=float(os.getenv('QUANT_PAPER_COMPOUND_RISK_FRACTION','.005')),
                   paper_summary_only=os.getenv('QUANT_PAPER_MAIL_SUMMARY_ONLY','true').lower() == 'true',
@@ -86,12 +89,22 @@ class PaperMarket(Binance):
 
 
 class RealtimePaperMarket(MarketStreamMixin, PaperMarket):
+    def mark(self, symbol):
+        if (os.getenv('QUANT_PAPER_PRIORITY_EXECUTION','false').lower()=='true'
+                and self.cfg.strategy=='lab_model' and getattr(self,'market_stream',None)):
+            return self.market_stream.mark(symbol,allow_rest=False)
+        return super().mark(symbol)
+
     def liquidity(self, symbol):
         from .lab_config import LabConfig
         from .lab_store import RealtimeBus
         cfg = LabConfig()
         if cfg.enabled:
-            row = RealtimeBus(cfg.redis_url).get('liquidity:'+symbol)
+            bus = getattr(self,'execution_bus',None)
+            if bus is None:
+                bus = RealtimeBus(cfg.redis_url)
+                self.execution_bus = bus
+            row = bus.get('liquidity:'+symbol)
             if not row or __import__('time').time()*1000-row['updated_ms'] > 2000:
                 raise ValueError('Live depth not ready')
             return row

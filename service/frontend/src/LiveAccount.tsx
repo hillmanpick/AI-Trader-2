@@ -31,6 +31,15 @@ export function LiveAccount() {
       {data.stale && <p role="status" style={{ color: '#edac65' }}>实盘数据尚未同步或已超过 90 秒；以下若有余额和仓位，为上次成功快照。</p>}
       <small>最后成功同步：{beijingTime(data.updated_at)}（UTC+8）</small>
       <p>账户通道：{data.account_stream?.status === 'connected' ? 'WebSocket 实时账户同步' : data.account_stream?.status === 'reconnecting' ? '账户 WebSocket 重连中，REST 校准中' : data.account_stream?.status === 'stopped' ? '账户 WebSocket 已停止，REST 校准中' : '账户 WebSocket 正在启动，REST 校准可用'}</p>
+      <details>
+        <summary>订单与成交回报诊断（只读，不下单）</summary>
+        <p>私有账户流订单事件 {fmt(data.account_stream?.order_events, 0)} 条 · 重连次数 {fmt(data.account_stream?.reconnects, 0)} · 最近事件 {beijingTime(data.account_stream?.last_event_at)}</p>
+        <p>观察订单 {Object.values(data.order_observation?.order_states || {}).reduce((sum: number, count: any) => sum + Number(count || 0), 0)} 笔 · 成交明细 {fmt(data.order_observation?.fills, 0)} 条 · 未决本地意图 {fmt(data.order_observation?.unresolved_intents, 0)} 笔</p>
+        <p>断线对账：{data.order_observation?.reconciliation?.ready ? '已对齐' : '封锁中'} · {data.order_observation?.reconciliation?.reason || '等待状态'} · 最近耗时 {fmt(data.order_observation?.reconciliation?.duration_ms, 1)} ms</p>
+        <p>网关只读请求 RTT：盘口 P95 {fmt(data.gateway_probe?.gateway?.latency?.stages?.['rpc:depth']?.p95_ms, 1)} ms（{fmt(data.gateway_probe?.gateway?.counters?.['completed:depth'], 0)} 次成功）；签名账户读取 P95 {fmt(data.gateway_probe?.gateway?.latency?.stages?.['rpc:v2/account.status']?.p95_ms, 1)} ms（{fmt(data.gateway_probe?.gateway?.counters?.['completed:v2/account.status'], 0)} 次成功）。测量于 {beijingTime(data.gateway_probe?.at)}。</p>
+        <p>主动断线恢复测试：{data.gateway_probe?.user_stream_recovery?.forced_disconnect_recovered ? '已恢复并对账' : '尚无通过证据'} · 实际下单确认延迟：未测量，交易开关保持关闭。</p>
+        <small>仅观察币安账户订单/成交并对已跟踪交易对做有限历史补查；不代表接入了下单，也不声称覆盖整个账户全部历史。</small>
+      </details>
       {account && <>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(140px,1fr))', gap: '14px', margin: '20px 0' }}>
           {[['钱包余额', account.wallet], ['账户权益', account.equity], ['可用余额', account.available], ['未实现盈亏', account.unrealized], ['已用初始保证金', account.initial_margin], ['维持保证金', account.maintenance_margin]].map(([name, value]) => <div key={name as string}><small style={{ color: 'var(--text-secondary)' }}>{name}</small><div style={{ fontSize: '20px', fontWeight: 600 }}>{fmt(value)} <small>USDT</small></div></div>)}

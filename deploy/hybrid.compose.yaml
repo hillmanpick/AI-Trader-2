@@ -1,0 +1,20 @@
+# Use with the existing server Compose file; targets only the training worker.
+services:
+  lab-trainer:
+    command: [python, /opt/hybrid_training.py, fallback-watch, --lab, /data/lab]
+    volumes:
+      - ./data:/data
+      - ./hybrid_training.py:/opt/hybrid_training.py:ro
+      - ./hybrid-code/quant/lab_train.py:/app/service/server/quant/lab_train.py:ro
+    environment:
+      QUANT_ENABLED: "false"
+      QUANT_LIVE_ENABLED: "false"
+      QUANT_OBSERVATION_ONLY: "true"
+      QUANT_LAB_TRAIN_INTERVAL_SECONDS: "21600"
+      OMP_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

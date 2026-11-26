@@ -54,13 +54,20 @@ class Engine:
             positions = self.store.get('positions',{})
             exposure = sum(abs(p['amount'])*p['mark'] for p in positions.values())
             risk = sum(float(p.get('exit_plan',{}).get('planned_risk_usdt', paper_margin_used(p))) for p in positions.values())
-            cap = min(self.cfg.max_notional-exposure,
-                      liquidity['ask_depth' if action == 'long' else 'bid_depth']*self.cfg.paper_depth_participation)
+            unrestricted = self.cfg.mode == 'paper' and self.cfg.paper_unrestricted_positions
+            cap = liquidity['ask_depth' if action == 'long' else 'bid_depth']*self.cfg.paper_depth_participation
+            if not unrestricted:
+                cap = min(self.cfg.max_notional-exposure, cap)
             override = None
             correlation = None
             if self.cfg.strategy == 'lab_model':
                 row = self.lab_row(symbol)
-                cap,correlation = self.lab_risk_cap(symbol,1 if action=='long' else -1,cap)
+                if not unrestricted:
+                    cap,correlation = self.lab_risk_cap(symbol,1 if action=='long' else -1,cap)
+                if self.cfg.paper_quant_system:
+                    from .quant_strategy import risk_plan, policy_for_quant
+                    plan = risk_plan(row,liquidity,policy_for_quant(self.cfg),positions,cap)
+                    return plan | {'liquidity':liquidity,'correlation_risk':correlation}
                 from .execution_policy import policy_for_settings, microstructure_plan
                 parameters = None
                 if self.cfg.paper_ai_autopilot:
@@ -418,7 +425,8 @@ class Engine:
         execution = getattr(self,'paper_execution',None)
         if execution and action=='close' and old:
             return self.paper_order(symbol,-old['amount'],price,reason,key)
-        if execution and action!='close' and execution.exits():
+        unrestricted = self.cfg.mode == 'paper' and self.cfg.paper_unrestricted_positions
+        if execution and action!='close' and not unrestricted and execution.exits():
             self.store.set(f'sizing:{symbol}',{'status':'blocked','reason':'先完成已触发的模拟平仓，再处理新仓','at':utcnow()})
             return
         if execution and (execution.pending(symbol) or (action!='close' and any(not o.get('closing') for o in execution.journal.orders(active=True)))):
@@ -440,7 +448,7 @@ class Engine:
                 gate = getattr(self, 'lab_gate', None)
                 if gate is None or not gate(symbol):
                     return
-            if len(positions) >= self.cfg.max_positions:
+            if not unrestricted and len(positions) >= self.cfg.max_positions:
                 return
             context = self.store.get(f'entry_context:{symbol}', {})
             if self.cfg.mode == 'paper' and self.cfg.paper_dynamic_leverage:
@@ -459,9 +467,9 @@ class Engine:
             order_notional = float(context.get('order_notional', self.cfg.order_notional))
             position_leverage = int(context.get('leverage', self.cfg.leverage))
             exposure = sum(abs(p['amount'])*p['mark'] for p in positions.values())
-            if exposure+order_notional > self.cfg.max_notional:
+            if not unrestricted and exposure+order_notional > self.cfg.max_notional:
                 return
-            if self.cfg.mode == 'paper' and self.cfg.paper_max_margin:
+            if self.cfg.mode == 'paper' and self.cfg.paper_max_margin and not unrestricted:
                 if sum(paper_margin_used(p) for p in positions.values())+order_notional/position_leverage > self.cfg.paper_max_margin:
                     return
             required = order_notional/position_leverage + order_notional*0.002
@@ -534,8 +542,9 @@ class Engine:
             if self.cfg.mode=='paper' and self.cfg.strategy=='lab_model' and getattr(self,'paper_execution',None):
                 from .lab_config import LabConfig
                 opened = datetime.fromisoformat(p['opened_at']).timestamp()
-                if time.time()-opened>=p.get('ds_hold_seconds',LabConfig().horizon_seconds):
-                    self.paper_execution.request_exit(symbol,'ds_horizon' if p.get('ds_authority') else 'model_horizon')
+                horizon = p['exit_plan']['horizon_ms']/1000 if p.get('quant_version') else p.get('ds_hold_seconds',LabConfig().horizon_seconds)
+                if time.time()-opened>=horizon:
+                    self.paper_execution.request_exit(symbol,'quant_horizon' if p.get('quant_version') else 'ds_horizon' if p.get('ds_authority') else 'model_horizon')
             if symbol not in marks:
                 continue
             p['mark'] = marks[symbol]
@@ -577,13 +586,17 @@ class Engine:
                     continue
                 if self.cfg.mode == 'paper' and p.get('dynamic_exits'):
                     plan = p['exit_plan'] if self.cfg.strategy == 'lab_model' else self.store.get(f'volatility:{symbol}', p['exit_plan'])
-                    exit_reason = update_dynamic_exit(p,plan,self.cfg.fee_rate,self.cfg.paper_slippage)
+                    if p.get('quant_version'):
+                        from .quant_strategy import exit_reason as quant_exit
+                        exit_reason = quant_exit(p,int(time.time()*1000))
+                    else:
+                        exit_reason = update_dynamic_exit(p,plan,self.cfg.fee_rate,self.cfg.paper_slippage)
                     if self.cfg.strategy == 'lab_model':
                         from .lab_config import LabConfig
                         opened = datetime.fromisoformat(p['opened_at']).timestamp()
-                        horizon = p.get('ds_hold_seconds',LabConfig().horizon_seconds)
+                        horizon = plan['horizon_ms']/1000 if p.get('quant_version') else p.get('ds_hold_seconds',LabConfig().horizon_seconds)
                         if time.time()-opened >= horizon:
-                            exit_reason = 'ds_horizon' if p.get('ds_authority') else 'model_horizon'
+                            exit_reason = exit_reason or ('quant_horizon' if p.get('quant_version') else 'ds_horizon' if p.get('ds_authority') else 'model_horizon')
                     positions = self.store.get('positions',{})
                     positions[symbol] = p
                     self.store.set('positions',positions)
@@ -608,7 +621,7 @@ class Engine:
                     self.execute(symbol,'close',price,'deepseek_autopilot',utcnow())
                 elif model_action in ('long','short') and not p and self.cfg.enabled and not self.store.get('paused',False):
                     self.execute(symbol,model_action,price,
-                                 'deepseek_autopilot' if self.cfg.paper_ai_autopilot else 'lab_model',
+                                 'quant_system' if self.cfg.paper_quant_system else 'deepseek_autopilot' if self.cfg.paper_ai_autopilot else 'lab_model',
                                  str(int(time.time()*1000)))
                 continue
             # Cache closed candles until next expected close; poll mark prices separately.

@@ -17,7 +17,8 @@ from .account_stream import AccountStream
 from .rest_guard import RestCooldown
 
 READ_PATHS = {'/fapi/v1/time', '/fapi/v3/account', '/fapi/v3/positionRisk', '/fapi/v1/symbolConfig',
-              '/fapi/v1/premiumIndex', '/fapi/v1/klines'}
+              '/fapi/v1/premiumIndex', '/fapi/v1/klines', '/fapi/v1/openOrders',
+              '/fapi/v1/order', '/fapi/v1/userTrades'}
 
 
 class ReadOnlyBinance(Binance):
@@ -48,6 +49,20 @@ class ReadOnlyBinance(Binance):
         self._symbol_config_next = time.monotonic() + 60
         return value
 
+    def open_orders(self, symbol=None):
+        return self.request('GET','/fapi/v1/openOrders',{'symbol':symbol} if symbol else {},signed=True)
+
+    def user_trades(self, symbol, *, start_time=None, end_time=None, from_id=None, limit=1000):
+        if from_id is not None and (start_time is not None or end_time is not None):
+            raise ValueError('Trade pagination fromId cannot be combined with a time window')
+        if not 1 <= limit <= 1000:
+            raise ValueError('Trade page limit out of bounds')
+        params = {'symbol':symbol,'limit':limit}
+        for key,value in [('startTime',start_time),('endTime',end_time),('fromId',from_id)]:
+            if value is not None:
+                params[key] = int(value)
+        return self.request('GET','/fapi/v1/userTrades',params,signed=True)
+
     def create_listen_key(self):
         self.rest_guard.check()
         response = self.session.post(self.cfg.base_url + '/fapi/v1/listenKey',
@@ -75,9 +90,11 @@ class RealtimeReadOnlyBinance(MarketStreamMixin, ReadOnlyBinance):
         if stream and stream.can_serve():
             account, rows = stream.snapshot()
         else:
+            token = stream.seed_token() if stream else None
             account, rows = self.account(), self.positions()
             if stream:
-                stream.seed(account, rows)
+                if not stream.seed(account, rows, token=token):
+                    raise RuntimeError('Account changed during REST snapshot; retry reconciliation')
         # ACCOUNT_UPDATE carries position changes but not a live mark price.
         # Refresh every open position, including manually held symbols that are
         # outside QUANT_SYMBOLS. Subscribed symbols use the public WebSocket;
@@ -243,14 +260,40 @@ def run(cfg, store):
     cfg.validate()
     api = RealtimeReadOnlyBinance(cfg)
     api._start_market_stream()
-    api._start_account_stream()
+    from .private_journal import PrivateJournal
+    from .private_reconcile import PrivateReconciler
+    api.account_stream = AccountStream(api)
+    private_journal = PrivateJournal(cfg.private_journal_path,'production',cfg.api_key)
+    reconciler = PrivateReconciler(private_journal,api,cfg.symbols,stream=api.account_stream)
+    # The listener only persists exchange-originated observations. No method
+    # exposed by this observer can place or cancel an order.
+    api.account_stream.on_order = reconciler.enqueue
+    api.account_stream.on_gap = reconciler.gap
+    api.account_stream.on_connected = reconciler.connected
+    api.account_stream.on_account = reconciler.wakeup.set
+    api.account_stream.start()
     notifier = Notifier(replace(cfg, mode='live'), store)
     pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix='market-advice')
     future, next_advice = None, 0
+    last_generation = -1
+    last_reconciled = 0.0
     while True:
+        reconciler.wakeup.clear()
         error = None
         live = None
         try:
+            stream_state = api.account_stream.snapshot_status()
+            now = time.monotonic()
+            current_generation = stream_state.get('connection_generation',0)
+            reconciliation = private_journal.get('reconciliation',{})
+            if stream_state.get('status')=='connected' and (
+                    current_generation != last_generation or
+                    (not reconciliation.get('ready') and now-last_reconciled>=30) or now-last_reconciled>=300):
+                reconciliation = reconciler.run()
+                last_generation = current_generation
+                last_reconciled = now
+            reconciler.drain()
+            reconciliation = private_journal.get('reconciliation',{})
             live = collect(cfg, store, api)
             if future is not None and future.done():
                 try:
@@ -275,7 +318,8 @@ def run(cfg, store):
         store.set('worker', {'status': 'observing' if not error else 'observation_error', 'error': error, 'heartbeat': utcnow(),
                              'rest_cooldown_seconds': math.ceil(api.rest_guard.remaining()),
                              'market_stream': api.market_stream.snapshot(),
-                             'account_stream': api.account_stream.snapshot_status()})
+                             'account_stream': api.account_stream.snapshot_status(),
+                             'private_execution':private_journal.summary()})
         if not error and live is not None:
             positions = {f"{p['symbol']} / {p['position_side']}": p for p in live['positions']}
             # A mail failure must not invalidate a successful account snapshot.
@@ -283,4 +327,7 @@ def run(cfg, store):
                 notifier.tick(positions, 'observing', account_snapshot=live['account'], slot_namespace='live_observation')
             except Exception:
                 logging.warning('Observation notification processing failed')
-        time.sleep(30 if error else max(5, cfg.poll_seconds))
+        # An order event wakes persistence immediately, rather than waiting
+        # for the periodic account refresh timeout. Batch all queued events
+        # in one cycle; no per-order HTTP account polling is introduced.
+        reconciler.wakeup.wait(timeout=30 if error else max(5,cfg.poll_seconds))

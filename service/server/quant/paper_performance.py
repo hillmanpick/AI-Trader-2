@@ -19,7 +19,7 @@ def paper_performance(store, now=None, *, include_trades=False):
                          (end_ns,)).fetchall()
     positions, completed = {}, []
     result = {'scope':'盘口模拟成交账本（不含旧策略历史和追加资金）','net':0.,'today_net':0.,'recent_net':0.,'fees':0.,
-              'yesterday_net':0.,'gross':0.,'completed_trades':0,'wins':0,'win_rate':0.}
+              'yesterday_net':0.,'gross':0.,'funding_cost':0.,'completed_trades':0,'wins':0,'win_rate':0.}
     for quantity,price,fee,stamp,raw in rows:
         o = json.loads(raw)
         qty,price,fee = float(quantity),float(price),float(fee)
@@ -33,10 +33,17 @@ def paper_performance(store, now=None, *, include_trades=False):
             gross = (price-old['entry'])*qty*old['side']
             if o.get('reason') == 'paper_liquidation':
                 gross = max(gross-fee,-old['margin']*ratio)+fee
-            net = gross-old['fee']*ratio-fee
+            funding = 0.
+            context = old['context']
+            if context.get('quant_version'):
+                from .quant_strategy import funding_charge
+                funding = funding_charge(qty,old['entry'],context['entry_profile'],
+                                         old['opened_ns']//1000000,stamp//1000000)
+                result['funding_cost'] += funding
+            net = gross-old['fee']*ratio-fee-funding
             old['cycle_net'] += net
             old['cycle_gross'] += gross
-            old['cycle_cost'] += old['fee']*ratio+fee
+            old['cycle_cost'] += old['fee']*ratio+fee+funding
             result['gross'] += gross
             result['net'] += net
             if stamp>=day_ns:
@@ -56,8 +63,8 @@ def paper_performance(store, now=None, *, include_trades=False):
                     'gross_pnl':old['cycle_gross'],'cost_usdt':old['cycle_cost'],
                     'net_pnl':old['cycle_net'],'exit_reason':o.get('reason'),
                     'model_version':context.get('model_version'),
-                    'decision_authority':'deepseek' if context.get('ds_authority') else 'legacy',
-                    'strategy_version':context.get('strategy_version',1),
+                    'decision_authority':'quant_system' if context.get('quant_version') else 'deepseek' if context.get('ds_authority') else 'legacy',
+                    'strategy_version':context.get('quant_version') or context.get('strategy_version',1),
                     'regime':context.get('regime','unknown')})
                 positions.pop(o['symbol'])
             else:

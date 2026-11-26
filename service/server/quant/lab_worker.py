@@ -254,6 +254,8 @@ class Collector:
             self.buffers[symbol].clear()
             self.seed_failures.pop(symbol, None)
             self.seed_retry_at.pop(symbol, None)
+            if self.depth_update_event:
+                self.depth_update_event.set()
         except Exception as exc:
             failures = self.seed_failures.get(symbol, 0) + 1
             self.seed_failures[symbol] = failures
@@ -292,6 +294,8 @@ class Collector:
                 # Redis failure must not kill source ingestion or replace the
                 # reconnect path; cached execution depth also expires in 3s.
                 self.errors += 1
+            if self.depth_update_event:
+                self.depth_update_event.set()
 
     async def drop_depth_feed(self, symbols):
         """Remove an expired subscription without recording a feed disconnect."""
@@ -335,6 +339,8 @@ class Collector:
                     **{k:event[k] for k in ('U','u','pu')}},'control')
             if book.last is None or now-book.snapshot_ms > 60000:
                 self.seed_needed(symbol)
+        if self.depth_update_event:
+            self.depth_update_event.set()
 
     def seed_needed(self,symbol):
         if self.rest_guard.remaining() or time.monotonic() < self.seed_retry_at.get(symbol, 0):
@@ -606,9 +612,14 @@ class Collector:
         self.store.append_quotes([q for q in quotes if (q['symbol'],q['ts']) not in feature_keys])
 
     async def fast_books(self):
-        """Execution depth has its own cadence; feature sampling cannot delay exits."""
+        """Publish execution depth on book changes without polling delays."""
         revisions = {}
         while True:
+            if self.depth_update_event:
+                await self.depth_update_event.wait()
+                self.depth_update_event.clear()
+            else:
+                await asyncio.sleep(.1)
             now = int(time.time()*1000)
             updates = []
             for symbol in sorted(set(self.selected) | set(self.depth_symbols)):
@@ -617,7 +628,8 @@ class Collector:
                     if symbol in revisions:
                         try:
                             await asyncio.to_thread(self.bus.client.delete,
-                                'quant:lab:book:'+symbol,'quant:lab:liquidity:'+symbol)
+                                'quant:lab:book:'+symbol,'quant:lab:liquidity:'+symbol,
+                                'quant:lab:feature:'+symbol)
                             revisions.pop(symbol,None)
                         except Exception:
                             self.errors += 1
@@ -627,40 +639,58 @@ class Collector:
                 try:
                     liquidity = book.metrics(now,self.cfg.depth_bps)
                 except ValueError:
+                    if symbol in self.selected:
+                        updates.append(('feature:'+symbol,None))
+                        revisions[symbol] = book.last
                     continue
                 raw = {'lastUpdateId':book.last,'updated_ms':book.updated_ms,
                        'bids':sorted(book.bids.items(),reverse=True)[:100],
                        'asks':sorted(book.asks.items())[:100]}
                 updates.extend([('book:'+symbol,raw),('liquidity:'+symbol,liquidity)])
+                if symbol in self.selected:
+                    try:
+                        row = self.builder.build(symbol,liquidity,now,self.event_ms.get(symbol,0))
+                        row['meta']['filters'] = self.rules[symbol].get('filters',[])
+                        row['meta']['entry_allowed'] = True
+                        updates.append(('feature:'+symbol,row))
+                    except (KeyError,ValueError):
+                        updates.append(('feature:'+symbol,None))
                 revisions[symbol] = book.last
             if updates:
                 try:
                     def write():
                         pipe = self.bus.client.pipeline(transaction=False)
                         for key,value in updates:
-                            pipe.set('quant:lab:'+key,json.dumps(value,allow_nan=False),ex=3)
+                            if value is None:
+                                pipe.delete('quant:lab:'+key)
+                            else:
+                                pipe.set('quant:lab:'+key,json.dumps(value,allow_nan=False),ex=3)
                         pipe.execute()
                         self.bus.event('depth')
                     await asyncio.to_thread(write)
                 except Exception:
                     self.errors += 1
                     revisions.clear()
-            await asyncio.sleep(.1)
 
     async def collect_observations(self, now):
         rows, quotes, blocked = [], [], {}
         for s in sorted(set(self.selected) | set(self.depth_symbols)):
             try:
-                book = self.books[s].metrics(now,self.cfg.depth_bps)
+                # fast_books can advance this builder while this coroutine is
+                # awaiting Redis or event I/O; clamp each sample timestamp to
+                # that symbol's latest causal observation.
+                history = self.builder.history[s]
+                sample_now = max(now, history[-1][0]) if history else now
+                book = self.books[s].metrics(sample_now,self.cfg.depth_bps)
                 # Executable depth remains evidence even when feature creation
                 # fails or this symbol is only observed for a previous signal.
-                quotes.append({'symbol':s,'ts':now,'price':book['mid'],
+                quotes.append({'symbol':s,'ts':sample_now,'price':book['mid'],
                     'meta':{k:book[k] for k in ('bid','ask','bid_depth','ask_depth',
                                                'spread_bps','updated_ms','sequence')} |
                             {'candidate':s in self.selected}})
                 if book['spread_bps'] > self.cfg.max_spread_bps:
                     raise ValueError('Spread above limit')
-                row = self.builder.build(s,book,now,self.event_ms.get(s,0))
+                row = self.builder.build(s,book,sample_now,self.event_ms.get(s,0))
                 if s not in self.selected:
                     continue
                 row['meta']['filters'] = self.rules[s].get('filters',[])

@@ -96,6 +96,8 @@ addresses.json
 # ====================
 .secrets/
 .env.secrets
+deploy/compute.env
+deploy/compute-token
 server/.env
 *.pem
 *.key

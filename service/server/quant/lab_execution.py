@@ -10,6 +10,11 @@ from .store import utcnow
 from .lab_features import SCHEMA, FEATURES
 import math
 
+FAST_FEATURE_MAX_AGE_MS = 1500
+
+
+def needs_fast_features(controller):
+    return bool(controller and getattr(controller,'policy',{'grid_ms':100}).get('grid_ms',100)<1000)
 
 class LabExecution:
     def __init__(self, engine):
@@ -21,15 +26,25 @@ class LabExecution:
         self.last_refresh = 0
         self.event_cursor = '0-0'
         self.autopilot = None
+        self.quant = None
+        if engine.cfg.paper_quant_system:
+            from .quant_runtime import QuantController
+            self.quant = QuantController(engine, self)
         if engine.cfg.paper_ai_autopilot:
             from .paper_autopilot import PaperAutopilot
             self.autopilot = PaperAutopilot(engine,self)
 
     def start_event_listener(self, wake):
         def listen():
+            try:
+                latest = self.bus.client.xrevrange('quant:lab:events', count=1)
+                if latest:
+                    self.event_cursor = latest[0][0]
+            except Exception:
+                time.sleep(1)
             while True:
                 try:
-                    events = self.bus.client.xread({'quant:lab:events':self.event_cursor},count=100,block=500)
+                    events = self.bus.client.xread({'quant:lab:events':self.event_cursor},count=100,block=1000)
                     if events:
                         self.event_cursor = events[-1][1][-1][0]
                         wake.set()
@@ -41,11 +56,14 @@ class LabExecution:
         if time.time()-self.last_refresh < 5:
             return
         self.last_refresh = time.time()
-        self.status,self.model = model_status(self.cfg)
+        if not self.quant:
+            self.status,self.model = model_status(self.cfg)
         e = self.engine
         if e.cfg.mode != 'paper' or e.cfg.api_key or e.cfg.api_secret or e.cfg.live_enabled:
             raise RuntimeError('Model execution cannot access a real account')
         candidate_ok = False
+        if self.quant:
+            self.status = self.quant.refresh()
         try:
             candidate = self.bus.get('candidates') or {}
             if not 0 <= time.time()*1000-candidate.get('ts',0) <= 650000:
@@ -76,13 +94,17 @@ class LabExecution:
 
     def row(self,symbol):
         row = self.bus.get('feature:'+symbol)
-        if (not row or not 0 <= time.time()*1000-row['ts'] <= 10000
+        fast_required = needs_fast_features(getattr(self,'quant',None))
+        age_limit = FAST_FEATURE_MAX_AGE_MS if fast_required else 10000
+        if (not row or not 0 <= time.time()*1000-row['ts'] <= age_limit
                 or not row['meta'].get('quality') or row['meta'].get('schema') != SCHEMA
                 or not row['meta'].get('entry_allowed',True)
                 or row.get('symbol') != symbol or len(row.get('vector',[])) != len(FEATURES)
                 or not all(math.isfinite(v) for v in row['vector'])
                 or not math.isfinite(row['price']) or row['price'] <= 0):
             raise ValueError('Features stale or invalid')
+        if fast_required and not row.get('fast',{}).get('ready'):
+            raise ValueError('Subsecond order-flow warmup incomplete')
         return row
 
     def risk_cap(self,symbol,side,maximum):
@@ -115,9 +137,10 @@ class LabExecution:
 
     def gate(self,symbol):
         self.refresh()
-        if not self.cfg.enabled or not self.status.get('ready') or (not self.model and not getattr(self,'autopilot',None)):
+        if not self.cfg.enabled or not self.status.get('ready') or (not self.model and not getattr(self,'autopilot',None) and not getattr(self,'quant',None)):
             return False
-        if self.status.get('exploration') and not self.engine.cfg.paper_exploration_mode:
+        if (self.status.get('exploration') and not self.engine.cfg.paper_exploration_mode
+                and not (self.quant and self.engine.cfg.paper_quant_exploration)):
             return False
         try:
             state = self.bus.get('state') or {}
@@ -133,6 +156,8 @@ class LabExecution:
 
     def signal(self,symbol):
         e = self.engine
+        if getattr(self, 'quant', None):
+            return self.quant.signal(symbol)
         if getattr(self,'autopilot',None) and symbol in e.store.get('positions',{}):
             return self.autopilot.signal(symbol)
         if not self.gate(symbol):

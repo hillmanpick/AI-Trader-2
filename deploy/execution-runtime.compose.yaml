@@ -1,0 +1,19 @@
+# Last override for paper-worker only. No live trading or strategy change.
+services:
+  paper-worker:
+    image: ai-trader-quant:execution-runtime-20261126
+    pull_policy: never
+    environment:
+      QUANT_MODE: paper
+      QUANT_ENABLED: "false"
+      QUANT_LIVE_ENABLED: "false"
+      BINANCE_API_KEY: ""
+      BINANCE_API_SECRET: ""
+      DEEPSEEK_API_KEY: ""
+      QUANT_PAPER_PRIORITY_EXECUTION: "true"
+      QUANT_PAPER_MAX_SIGNAL_AGE_MS: "2000"
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"

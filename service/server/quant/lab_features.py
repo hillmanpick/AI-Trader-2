@@ -38,13 +38,17 @@ class FeatureBuilder:
 
     def build(self, symbol, book, now, event_ms):
         history = self.history[symbol]
-        if history and now <= history[-1][0]:
+        if history and now < history[-1][0]:
             raise ValueError('Non-monotonic sample timestamp')
         mid = book['mid']
-        history.append((now, mid))
+        if history and now == history[-1][0]:
+            history[-1] = (now, mid)
+        else:
+            history.append((now, mid))
         def ret(seconds, rows=history):
             prior = next((p for t,p in reversed(rows) if t <= now-seconds*1000), None)
             return math.log(mid/prior) if prior else None
+        r250, r1 = ret(.25), ret(1)
         r5, r30, r60 = ret(5), ret(30), ret(60)
         if r60 is None or r30 is None or r5 is None:
             raise ValueError('Feature warmup needs 60 seconds')
@@ -60,8 +64,11 @@ class FeatureBuilder:
         if not trades or now-trades[-1][0] > 10000 or now < self.bad_until.get(symbol,0):
             raise ValueError('Trade stream stale, missing or warming after reconnect')
         recent = [(q,side) for t,q,side in trades if now-5000 <= t <= now]
+        fast_trades = [(q,side) for t,q,side in trades if now-1000 <= t <= now]
         total = sum(q for q,_ in recent)
         imbalance = sum(q*side for q,side in recent)/total if total else 0
+        fast_total = sum(q for q,_ in fast_trades)
+        fast_imbalance = sum(q*side for q,side in fast_trades)/fast_total if fast_total else 0
         baseline = sum(q for t,q,_ in trades if t <= now)/12
         if not book.get('ofi_ready'):
             raise ValueError('Event OFI needs five seconds of continuous depth')
@@ -78,7 +85,16 @@ class FeatureBuilder:
                   math.log(btc[-1][1]/btc_prior), math.log1p(book['bid_depth']),math.log1p(book['ask_depth']),lag]
         if not all(math.isfinite(v) for v in vector):
             raise ValueError('Non-finite features')
-        return {'symbol':symbol, 'ts':now, 'price':mid, 'vector':vector,
+        bid_qty, ask_qty = book['bid_qty'], book['ask_qty']
+        queue = bid_qty+ask_qty
+        microprice = ((book['ask']*bid_qty+book['bid']*ask_qty)/queue if queue else mid)
+        fast = {'return_250ms':r250,'return_1s':r1,
+                'trade_imbalance_1s':fast_imbalance,'ofi_1s':book.get('ofi_1s',0.),
+                'ofi_1s_events':book.get('ofi_1s_events',0),
+                'microprice_edge_bps':(microprice-mid)/mid*10000,
+                'ready':bool(r250 is not None and r1 is not None
+                             and book.get('ofi_1s_events',0)>=3 and fast_trades)}
+        return {'symbol':symbol, 'ts':now, 'price':mid, 'vector':vector, 'fast':fast,
                 'meta':book | {'schema':SCHEMA,'event_ms':event_ms,'quality':True,
                                'atr_proxy':max(.0008, math.sqrt(variance)*math.sqrt(12)),
                                'trade_volume':total,'trade_gaps':self.trade_gaps[symbol]}}

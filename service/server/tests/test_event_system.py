@@ -127,6 +127,7 @@ def test_depth_metrics_accumulate_intermediate_best_queue_flow():
     metrics = b.metrics(6001)
     assert metrics['ofi_ready'] and metrics['ofi_events'] == 2
     assert metrics['ofi_5s'] == pytest.approx(10/15)
+    assert metrics['ofi_1s_events'] == 1
 
 
 def test_passive_limit_uses_trade_queue_and_cancel_can_lose_race(tmp_path):
@@ -952,6 +953,34 @@ def test_execution_book_publisher_does_not_wait_for_feature_sampling(tmp_path):
         assert keys==['quant:lab:book:BTCUSDT','quant:lab:liquidity:BTCUSDT']
         assert pipe.execute.call_count==1
         assert collector.bus.event.call_args.args==('depth',)
+    asyncio.run(check())
+
+
+def test_sampled_features_clamp_timestamp_after_fast_book_updates(tmp_path):
+    import asyncio,time
+    from quant.lab_config import LabConfig
+    from quant.lab_worker import Collector
+    async def check():
+        collector=Collector(LabConfig(directory=str(tmp_path)))
+        now=int(time.time()*1000)
+        collector.selected=('BTCUSDT',)
+        depth=DepthBook()
+        depth.seed({'lastUpdateId':100,'bids':[['99.99','5']],'asks':[['100.01','5']]},now)
+        depth.apply({'U':100,'u':101,'pu':99,'b':[],'a':[]},now)
+        collector.books['BTCUSDT']=depth
+        collector.rules={'BTCUSDT':{'filters':[]}}
+        collector.event_ms={'BTCUSDT':now}
+        collector.bus=type('Bus',(),{'put':lambda *args,**kwargs:None})()
+        collector.builder.history['BTCUSDT'].append((now+100,100.))
+        observed=[]
+        def fail_after_timestamp(symbol,metrics,stamp,event_ms):
+            observed.append(stamp)
+            raise ValueError('fixture')
+        collector.builder.build=fail_after_timestamp
+        _,quotes,blocked=await collector.collect_observations(now)
+        assert observed==[now+100]
+        assert quotes[0]['ts']==now+100
+        assert blocked['BTCUSDT']=='fixture'
     asyncio.run(check())
 
 

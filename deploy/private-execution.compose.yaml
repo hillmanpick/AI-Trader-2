@@ -1,0 +1,17 @@
+# Target only api/quant. Keep the existing paper/collector/trainer images.
+services:
+  quant:
+    image: ai-trader-quant:private-observer-20261126
+    pull_policy: never
+    environment:
+      QUANT_ENABLED: "false"
+      QUANT_LIVE_ENABLED: "false"
+      QUANT_OBSERVATION_ONLY: "true"
+      QUANT_PRIVATE_JOURNAL_PATH: /data/private-production-observer.db
+  api:
+    image: ai-trader-quant:private-api-20261126
+    pull_policy: never
+    environment:
+      QUANT_ENABLED: "false"
+      QUANT_LIVE_ENABLED: "false"
+      QUANT_OBSERVATION_ONLY: "true"

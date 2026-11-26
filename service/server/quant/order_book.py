@@ -120,6 +120,9 @@ class DepthBook:
         flows = [r for r in self.ofi if r[0] <= now_ms]
         average_queue = sum(r[2] for r in flows)/len(flows) if flows else 0
         ofi = sum(r[1] for r in flows)/average_queue if average_queue else 0
+        fast_flows = [r for r in flows if r[0] >= now_ms-1000]
+        fast_queue = sum(r[2] for r in fast_flows)/len(fast_flows) if fast_flows else 0
+        ofi_1s = sum(r[1] for r in fast_flows)/fast_queue if fast_queue else 0
         mid = (bid+ask)/2
         lower, upper = mid*(1-bps/10000), mid*(1+bps/10000)
         # If snapshot coverage is thinner than the requested band, do not
@@ -133,6 +136,7 @@ class DepthBook:
                 'imbalance': (sell-buy)/(sell+buy) if sell+buy else 0,
                 'depth_lower_bound':truncated,
                 'ofi_5s':ofi,'ofi_events':len(flows),
+                'ofi_1s':ofi_1s,'ofi_1s_events':len(fast_flows),
                 'ofi_ready':self.ofi_started_ms is not None and now_ms-self.ofi_started_ms >= 5000,
                 'bid_coverage_bps':(mid-min(self.bids))/mid*10000,
                 'ask_coverage_bps':(max(self.asks)-mid)/mid*10000,

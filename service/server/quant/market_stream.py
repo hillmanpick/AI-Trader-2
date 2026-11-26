@@ -28,7 +28,10 @@ class MarketStream:
     def start(self):
         if self._thread and self._thread.is_alive():
             return
-        for symbol in self.symbols:
+        # Order-flow strategies never read candles. Seeding hundreds of REST
+        # candles delays connection establishment without improving their input.
+        seed_symbols = () if getattr(self.exchange.cfg,'strategy',None)=='lab_model' else self.symbols
+        for symbol in seed_symbols:
             try:
                 self.candles[symbol] = list(self.exchange._rest_closed_candles(symbol))[-499:]
                 self.updated['candle:' + symbol] = time.monotonic()
@@ -141,11 +144,13 @@ class MarketStream:
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
             logging.debug('Ignored malformed Binance market event')
 
-    def mark(self, symbol):
+    def mark(self, symbol, allow_rest=True):
         with self._lock:
             value, updated = self.marks.get(symbol), self.updated.get('mark:' + symbol, 0)
         if value is not None and time.monotonic() - updated <= 5:
             return value
+        if not allow_rest:
+            raise ValueError('Fresh WebSocket mark unavailable; synchronous REST disabled')
         with self._lock:
             self.rest_fallbacks += 1
         return self.exchange._rest_mark(symbol)

@@ -14,6 +14,7 @@ class Settings:
     api_secret: str = field(default_factory=lambda: os.getenv('BINANCE_API_SECRET', ''))
     operator_token: str = field(default_factory=lambda: os.getenv('QUANT_API_TOKEN', ''))
     db_path: str = field(default_factory=lambda: os.getenv('QUANT_DB_PATH', 'service/server/data/quant.db'))
+    private_journal_path: str = field(default_factory=lambda: os.getenv('QUANT_PRIVATE_JOURNAL_PATH', 'service/server/data/private-execution.db'))
     symbols: tuple = field(default_factory=lambda: tuple(s.strip().upper() for s in os.getenv('QUANT_SYMBOLS', 'BTCUSDT,ETHUSDT').split(',') if s.strip()))
     strategy: str = field(default_factory=lambda: os.getenv('QUANT_STRATEGY', 'sma_cross'))
     interval: str = field(default_factory=lambda: os.getenv('QUANT_INTERVAL', '15m'))
@@ -66,6 +67,9 @@ class Settings:
     paper_ai_autopilot_interval: int = 60
     paper_fast_execution: bool = False
     paper_ds_authority: bool = False
+    paper_quant_system: bool = False
+    paper_quant_exploration: bool = False
+    paper_unrestricted_positions: bool = False
     paper_compound_capital: float = 6000.
     paper_compound_risk_fraction: float = .005
     paper_summary_only: bool = False
@@ -92,6 +96,21 @@ class Settings:
         return self.mode == 'live'
 
     def validate(self):
+        if self.paper_unrestricted_positions and (self.mode != 'paper' or self.api_key or self.api_secret
+                or self.live_enabled or self.observation_only or not self.paper_quant_system):
+            raise ValueError('Unrestricted positions require credential-free systematic paper mode')
+        if self.paper_quant_system and (self.mode != 'paper' or self.api_key or self.api_secret
+                or self.live_enabled or self.observation_only or self.strategy != 'lab_model'
+                or not self.paper_lab_required or not self.paper_dynamic_leverage
+                or not self.paper_dynamic_exits or self.paper_ai_autopilot or self.paper_ds_authority
+                or self.paper_fast_execution or self.paper_exploration_mode or self.ai_enabled
+                or self.reflection_enabled):
+            raise ValueError('Systematic execution requires credential-free paper lab mode, frozen policy and no AI/exploration overrides')
+        if self.paper_quant_exploration and (not self.paper_quant_system or self.mode != 'paper'
+                or self.api_key or self.api_secret or self.live_enabled or self.observation_only
+                or self.paper_ai_autopilot or self.paper_ds_authority or self.paper_fast_execution
+                or self.ai_enabled or self.reflection_enabled):
+            raise ValueError('Systematic exploration requires credential-free paper-only deterministic execution')
         if self.mode not in {'paper', 'testnet', 'live'}:
             raise ValueError('QUANT_MODE must be paper/testnet/live')
         if self.strategy not in {'sma_cross', 'bollinger', 'adaptive', 'lab_model'}:
@@ -210,6 +229,9 @@ class Settings:
             'paper_ai_autopilot_interval_seconds': self.paper_ai_autopilot_interval,
             'paper_fast_execution': self.paper_fast_execution,
             'paper_ds_authority': self.paper_ds_authority,
+            'paper_quant_system': self.paper_quant_system,
+            'paper_quant_exploration': self.paper_quant_exploration,
+            'paper_unrestricted_positions': self.paper_unrestricted_positions,
             'paper_compound_capital': self.paper_compound_capital,
             'paper_compound_risk_fraction': self.paper_compound_risk_fraction,
             'paper_summary_only': self.paper_summary_only,

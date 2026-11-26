@@ -37,6 +37,14 @@ def register_quant_routes(app):
         from quant.lab_model import model_status
         lab = LabConfig()
         model,_ = model_status(lab)
+        paper = paper_settings(cfg)
+        systematic_report = None
+        if paper.paper_quant_system:
+            from quant.quant_research import artifact_status
+            from quant.quant_strategy import policy_for_quant
+            systematic = artifact_status(lab.directory,policy_for_quant(paper))
+            systematic_report = systematic.get('report',{})
+            model = {k:v for k,v in systematic.items() if k!='report'}
         try:
             bus = RealtimeBus(lab.redis_url)
             state = bus.get('state') or {}
@@ -53,7 +61,7 @@ def register_quant_routes(app):
         from quant.paper_trial import forward_trial_status
         paper = paper_settings(cfg)
         paper_db = Store(paper.db_path)
-        opening = paper_readiness(paper,lab,model,latest_report(lab.directory),state,redis_ok,
+        opening = paper_readiness(paper,lab,model,systematic_report if systematic_report is not None else latest_report(lab.directory),state,redis_ok,
                                   paper_db.get('paused',False),now)
         opening['forward_trial'] = forward_trial_status(paper_db)
         try:
@@ -122,6 +130,9 @@ def register_quant_routes(app):
                 'entry_quality':{s:db.get(f'entry_quality:{s}') for s in symbols},
                 'reflection':StrategyReflector(db, paper).status(),
                 'lab_gate':db.get('lab_gate',{}),
+                'quant_system':db.get('quant_system',{}),
+                'quant_performance':db.get('quant_performance',{}),
+                'quant_decisions':db.get('quant_recent_decisions',[]),
                 'autopilot':db.get('autopilot',{}),
                 'autopilot_input':db.get('autopilot:input_summary',{}),
                 'pending_exits':{s:db.get('paper_exit:'+s) for s in db.get('positions',{})
@@ -130,6 +141,8 @@ def register_quant_routes(app):
                              'performance':db.get(STATS_KEY,{}),
                              'profitability_proven':False},
                 'execution_statistics':db.get('execution_statistics',{}),
+                'execution_runtime':db.get('execution_runtime',{}),
+                'hybrid_compute':db.get('hybrid_compute',{}),
                 'execution_closed_fills':db.get('execution_closed_fills',[])[-30:],
                 'sizing':{s:db.get(f'sizing:{s}') for s in db.get('config',paper.public()).get('symbols',[])},
                 'events':db.events(limit=30), 'orders':db.orders()[:30], 'mail':db.get('mail_status',{})}
@@ -156,6 +169,8 @@ def register_quant_routes(app):
         worker = db.get('worker', {})
         return snapshot | {'read_only':True, 'execution_enabled':False, 'stale':age_seconds(snapshot.get('updated_at')) > 90,
                            'account_stream':worker.get('account_stream', {'status':'not_started'}),
+                           'order_observation':worker.get('private_execution', {'reconciliation':{'ready':False,'reason':'not_reported'}}),
+                           'gateway_probe':db.get('private_gateway_probe',{}),
                            'credentials_configured':bool(cfg.api_key and cfg.api_secret),
                            'observer_enabled':cfg.observation_only}
 

@@ -8,7 +8,7 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
            margin=2000, max_margin=6000, risk_fraction=.10, min_leverage=2,
            max_leverage=20, max_positions=3, depth_participation=.05,
            horizon_ms=300000, max_spread_bps=10, funding_fallback=.001,
-           policy=None, signal_fn=None):
+           policy=None, signal_fn=None, quant=False, cost_multiplier=1.):
     cfg = {'fee_rate':fee,'paper_slippage':slippage,'paper_margin':margin,
            'paper_max_margin':max_margin,'paper_risk_fraction':risk_fraction,
            'paper_min_leverage':min_leverage,'paper_max_leverage':max_leverage,
@@ -17,7 +17,7 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
            'paper_max_spread_bps':max_spread_bps,'max_positions':max_positions,
            'max_notional':max_margin*max_leverage,'paper_exploration_mode':False}
     cfg.update(policy or {})
-    fee, slippage = cfg['fee_rate'],cfg['paper_slippage']
+    fee, slippage = cfg['fee_rate']*cost_multiplier,cfg['paper_slippage']*cost_multiplier
     margin,max_margin = cfg['paper_margin'],cfg['paper_max_margin']
     max_positions,max_spread_bps = cfg['max_positions'],cfg['paper_max_spread_bps']
     depth_participation = cfg['paper_depth_participation']
@@ -25,6 +25,8 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
     cash, peak, drawdown = 100000., 100000., 0.
     positions, pending, latest, trades = {}, {}, {}, []
     rejected, partial, fees = 0, 0, 0.
+    cooldown, grids = {}, {}
+    missing_filters = 0
 
     def fill(row,side):
         return row['meta']['ask' if side > 0 else 'bid']*(1+side*slippage)
@@ -37,16 +39,31 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
         gross = (px-p['entry'])*p['qty']*p['side']
         # Conservative funding fallback, prorated; never credits funding income.
         funding = p['qty']*p['entry']*abs(row.get('meta',{}).get('funding_rate',funding_fallback))*max(0,row['ts']-p['ts'])/28800000
+        if quant:
+            from .quant_strategy import funding_charge
+            funding = funding_charge(p['qty'],p['entry'],p['exit_plan'],p['ts'],row['ts'])
         net = max(gross-cost-funding,-p['margin'])-p['entry_fee']
         cash += net+p['entry_fee']
         fees += cost+funding
         trades.append({'symbol':s,'net':net,'reason':reason,'mae':p['mae'],'mfe':p['mfe'],
+                       'gross':gross,'cost':p['entry_fee']+cost+funding,
+                       'notional':p['entry']*p['qty'],'opened_at':p['ts'],
+                       'side':p['side'], 'hold_ms':row['ts']-p['ts'],
                        'leverage':p['leverage'],'margin':p['margin'],'at':row['ts']})
+        if quant:
+            cooldown[s] = row['ts'] + cfg['cooldown_ms']
 
     pairs = ((r,signal_fn(r) if r['meta'].get('entry_allowed',True) else 0)
              for r in rows) if signal_fn else zip(rows,predictions)
     for row,pred in pairs:
         s,t,price,meta = row['symbol'],row['ts'],row['price'],row['meta']
+        if quant:
+            grid = t // cfg['grid_ms']
+            if grids.get(s) == grid:
+                pred = 0
+            grids[s] = grid
+            if t < cooldown.get(s, 0):
+                pred = 0
         if s in positions and s in latest and t-latest[s]['ts']>45000:
             gaps[s] += 1
         latest[s] = row
@@ -55,11 +72,17 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
             move = (price/p['entry']-1)*p['side']
             p['mae'],p['mfe'] = min(p['mae'],move),max(p['mfe'],move)
             p['mark'] = price
-            exit_reason = update_dynamic_exit(p,{'stop_pct':p['stop'],'take_pct':p['take'],
-                              'atr':0.,'regime':'microstructure'},fee,slippage)
+            if quant:
+                from .quant_strategy import exit_reason as quant_exit
+                exit_reason = quant_exit(p, t)
+            else:
+                exit_reason = update_dynamic_exit(p,{'stop_pct':p['stop'],'take_pct':p['take'],
+                                  'atr':0.,'regime':'microstructure'},fee,slippage)
             if exit_reason or t-p['ts'] >= horizon_ms:
                 close(s,row,exit_reason or 'timeout')
                 pending.pop(s,None)
+                if quant:
+                    pred = 0
         order = pending.get(s)
         if not meta.get('entry_allowed',True) and not meta.get('candidate',False):
             # Observation is sufficient for closing, never for a new entry.
@@ -76,12 +99,14 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
                 reasons['late_quote' if t-order['due']>45000 else 'spread'] += 1
                 continue
             used_margin = sum(p['margin'] for p in positions.values())
-            if s in positions or len(positions) >= max_positions:
+            unrestricted = quant and cfg.get('paper_unrestricted_positions', False)
+            if s in positions or (not unrestricted and len(positions) >= max_positions):
                 rejected += 1
                 reasons['position_limit'] += 1
                 continue
             side = order['side']
-            if sum(p['side'] == side for p in positions.values()) >= 2:
+            direction_limit = cfg.get('same_direction_limit') if quant else 2
+            if direction_limit is not None and sum(p['side'] == side for p in positions.values()) >= direction_limit:
                 rejected += 1
                 reasons['direction_concentration'] += 1
                 continue
@@ -90,14 +115,20 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
             exposure = sum(abs(p['amount'])*p['mark'] for p in positions.values())
             try:
                 signal_row = row if meta.get('entry_allowed',True) else order['signal_row']
-                plan = microstructure_plan(signal_row,meta,cfg,positions,min(depth,cfg['max_notional']-exposure))
+                if quant:
+                    from .quant_strategy import risk_plan
+                    maximum = depth if unrestricted else min(depth,cfg['max_notional']-exposure)
+                    plan = risk_plan(signal_row,meta,cfg,positions,maximum)
+                else:
+                    plan = microstructure_plan(signal_row,meta,cfg,positions,min(depth,cfg['max_notional']-exposure))
             except (ValueError,KeyError) as exc:
                 rejected += 1
                 reasons['cost' if 'cost' in str(exc).lower() else 'risk_or_liquidity'] += 1
                 continue
             leverage,notional = plan['leverage'],plan['notional']
             stop,take = plan['stop_pct'],plan['take_pct']
-            if used_margin+plan['margin']>max_margin or cash-used_margin<plan['margin']+notional*.002:
+            if ((not unrestricted and used_margin+plan['margin']>max_margin)
+                    or cash-used_margin<plan['margin']+notional*.002):
                 rejected += 1
                 reasons['collateral'] += 1
                 continue
@@ -111,6 +142,11 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
             px = fill(row,side)
             quantity = actual/px
             filters = {f['filterType']:f for f in signal_row['meta'].get('filters',[])}
+            if quant and not {'LOT_SIZE', 'MIN_NOTIONAL'} <= filters.keys():
+                missing_filters += 1
+                rejected += 1
+                reasons['historical_exchange_filters_missing'] += 1
+                continue
             lot = filters.get('MARKET_LOT_SIZE',filters.get('LOT_SIZE',{}))
             step = float(lot.get('stepSize',0)) or float(filters.get('LOT_SIZE',{}).get('stepSize',0))
             if step:
@@ -129,7 +165,8 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
             positions[s] = {'entry':px,'qty':quantity,'side':side,'ts':t,'stop':stop,'take':take,
                             'margin':actual/leverage,'leverage':leverage,'entry_fee':entry_fee,'mae':0.,'mfe':0.,
                             'amount':side*quantity,'mark':price,'stop_pct':stop,
-                            'stop_price':px*(1-side*stop),'exit_plan':plan}
+                            'stop_price':px*(1-side*stop),'exit_plan':plan,
+                            'quant_opened_ms':t}
         if meta.get('entry_allowed',True) and s not in positions and s not in pending and pred in (-1,1):
             stop = max(.0008,meta.get('atr_proxy',.002)*1.5)
             if stop >= .5:
@@ -139,6 +176,8 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
         peak = max(peak,equity)
         drawdown = max(drawdown,peak-equity)
     for s in list(positions):
+        if quant and rows[-1]['ts']-latest[s]['ts']>45000:
+            gaps[s] += 1
         close(s,latest[s],'end')
     drawdown = max(drawdown,peak-cash)
     wins = sum(t['net'] for t in trades if t['net'] > 0)
@@ -146,7 +185,7 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
     return {'net_pnl':cash-100000,'trades':len(trades),'win_rate':sum(t['net']>0 for t in trades)/len(trades) if trades else 0,
             'profit_factor':wins/losses if losses else None,'max_drawdown':drawdown,'fees':fees,
             'partial_fills':partial,'rejected':rejected,'rejection_reasons':dict(reasons),
-            'valid':not gaps,'data_gaps_while_holding':dict(gaps),'research_only':True,
+            'valid':not gaps and not missing_filters,'data_gaps_while_holding':dict(gaps),'research_only':True,
             'policy':cfg,'latency_ms':latency_ms,
             'mae_mean':sum(t['mae'] for t in trades)/len(trades) if trades else 0,
             'mfe_mean':sum(t['mfe'] for t in trades)/len(trades) if trades else 0,
@@ -155,4 +194,4 @@ def replay(rows, predictions, *, fee=.0005, slippage=.0003, latency_ms=500,
                            'Visible depth participation approximates impact and partial fills',
                            'Training replay omits per-sample exchange quantity filters to bound RAM',
                            'Survivorship and candidate-selection history limits remain'],
-            'fills':trades[-200:]}
+            'fills':trades if quant else trades[-200:]}

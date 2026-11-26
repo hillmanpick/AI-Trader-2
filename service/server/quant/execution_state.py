@@ -53,6 +53,8 @@ class OrderJournal:
                     id TEXT PRIMARY KEY, order_id TEXT, at_ns INTEGER, quantity TEXT, price TEXT, fee TEXT);
                 CREATE TABLE IF NOT EXISTS execution_match_state (
                     id INTEGER PRIMARY KEY CHECK(id=1), body TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS execution_active_orders ON execution_orders(state)
+                    WHERE state NOT IN ('FILLED','CANCELED','REJECTED','EXPIRED');
             ''')
 
     @contextmanager
@@ -175,8 +177,15 @@ class OrderJournal:
             c.execute('UPDATE execution_orders SET body=? WHERE id=?',(json.dumps(order,allow_nan=False),identity))
         return order
 
-    def statistics(self):
-        orders = self.orders()
+    def statistics(self,limit=None):
+        if limit is None:
+            orders = self.orders()
+            states = {s:sum(o['state']==s for o in orders) for s in sorted({o['state'] for o in orders})}
+        else:
+            with self.connect() as c:
+                states = dict(c.execute('SELECT state,COUNT(*) FROM execution_orders GROUP BY state'))
+                orders = [json.loads(r[0]) for r in c.execute(
+                    'SELECT body FROM execution_orders ORDER BY rowid DESC LIMIT ?',(int(limit),))]
         ack = [(o['ack_ns']-o['submitted_ns'])/1e6 for o in orders if o.get('ack_ns') is not None]
         first = [(o['first_fill_ns']-o['submitted_ns'])/1e6 for o in orders if o.get('first_fill_ns') is not None]
         cancel = [(o['updated_ns']-o['cancel_requested_ns'])/1e6 for o in orders if o['state']=='CANCELED' and o.get('cancel_requested_ns') is not None]
@@ -184,7 +193,12 @@ class OrderJournal:
             return {'count':len(values),'p50_ms':percentile(values,.5),'p95_ms':percentile(values,.95),
                     'p99_ms':percentile(values,.99),'max_ms':max(values) if values else None}
         return {'clock':'simulation receive clock; not exchange execution SLA',
-                'orders':len(orders),'states':{s:sum(o['state']==s for o in orders) for s in sorted({o['state'] for o in orders})},
+                'orders':sum(states.values()),'states':states,
+                'sampled_orders':len(orders),
+                'zero_fill_orders':sum(number(o['filled'])==0 for o in orders),
+                'zero_fill_ratio':(sum(number(o['filled'])==0 for o in orders)/len(orders)) if orders else None,
+                'latency_scope':'all orders' if limit is None else f'latest {len(orders)} orders',
+                'partial_orders_scope':'all orders' if limit is None else f'latest {len(orders)} orders',
                 'acknowledgement':distribution(ack),'first_fill':distribution(first),'cancel':distribution(cancel),
                 'partial_orders':sum(0<number(o['filled'])<number(o['quantity']) for o in orders)}
 

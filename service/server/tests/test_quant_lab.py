@@ -318,6 +318,34 @@ def test_lab_rejects_stale_or_invalid_redis_feature(tmp_path):
         lab.row('BTCUSDT')
 
 
+def test_systematic_lab_rejects_features_older_than_event_tick():
+    from quant.lab_execution import LabExecution, FAST_FEATURE_MAX_AGE_MS
+    lab = LabExecution.__new__(LabExecution)
+    lab.quant = object()
+    lab.bus = MagicMock()
+    current = row(int(time.time()*1000)-FAST_FEATURE_MAX_AGE_MS-1)
+    current['fast'] = {'ready':True}
+    lab.bus.get.return_value = current
+    with pytest.raises(ValueError,match='stale'):
+        lab.row('BTCUSDT')
+    current['ts'] = int(time.time()*1000)
+    current['fast'] = {'ready':False}
+    with pytest.raises(ValueError,match='Subsecond'):
+        lab.row('BTCUSDT')
+
+
+def test_systematic_lab_accepts_recent_websocket_feature_within_1500ms():
+    from quant.lab_execution import LabExecution,FAST_FEATURE_MAX_AGE_MS
+    assert FAST_FEATURE_MAX_AGE_MS==1500
+    lab=LabExecution.__new__(LabExecution)
+    lab.quant=object()
+    lab.bus=MagicMock()
+    current=row(int(time.time()*1000)-1000)
+    current['fast']={'ready':True}
+    lab.bus.get.return_value=current
+    assert lab.row('BTCUSDT')['symbol']=='BTCUSDT'
+
+
 def test_exploration_rejects_live_or_credentials(tmp_path):
     e,db,api = dynamic_engine(tmp_path)
     cfg = replace(e.cfg,strategy='lab_model',paper_lab_required=True,paper_exploration_mode=True)
@@ -375,3 +403,27 @@ def test_feature_warmup_future_frames_trade_gaps_and_causality():
     b.trade({'s':'BTCUSDT','a':99,'p':100,'q':1,'m':False,'T':now},now)
     with pytest.raises(ValueError,match='Trade stream'):
         b.build('BTCUSDT',book,now,now)
+
+
+def test_event_features_track_subsecond_returns_and_coalesce_same_millisecond():
+    builder = FeatureBuilder()
+    base = 2_000_000
+    output = None
+    for i in range(701):
+        now = base+i*100
+        price = 100*(1+i*.000001)
+        builder.trade({'s':'BTCUSDT','a':i+1,'p':price,'q':1,'m':False,'T':now},now)
+        book = {'mid':price,'bid':price-.005,'ask':price+.005,'bid_qty':12,'ask_qty':8,
+                'spread_bps':1.,'imbalance':.2,'bid_depth':10000,'ask_depth':9000,
+                'ofi_5s':.5,'ofi_events':50,'ofi_ready':True,'ofi_1s':.4,'ofi_1s_events':8}
+        try:
+            output = builder.build('BTCUSDT',book,now,now)
+        except ValueError as exc:
+            assert 'warmup' in str(exc)
+    assert output['fast']['ready']
+    assert output['fast']['return_250ms'] > 0
+    assert output['fast']['return_1s'] > 0
+    history_len = len(builder.history['BTCUSDT'])
+    same_ms = builder.build('BTCUSDT',book,now,now)
+    assert len(builder.history['BTCUSDT']) == history_len
+    assert same_ms['fast']['ready']

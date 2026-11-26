@@ -1,6 +1,7 @@
 """Real-time paper IOC fills through the same journal and depth matcher as replay."""
 import json
 import math
+import os
 import time
 from datetime import datetime,timezone
 
@@ -25,6 +26,15 @@ class PaperExecution:
                                      participation=engine.cfg.paper_depth_participation,on_fill=self.apply_fill,
                                      slippage=engine.cfg.paper_slippage)
         self.reflection_synced = False
+        self.last_reflection_sync = 0.
+        self.last_statistics_sync = 0.
+        self.priority_execution = os.getenv('QUANT_PAPER_PRIORITY_EXECUTION','false').lower()=='true'
+        self.signal_max_age_ms = int(os.getenv('QUANT_PAPER_MAX_SIGNAL_AGE_MS','2000'))
+        if not 100 <= self.signal_max_age_ms <= 10000:
+            raise ValueError('Paper signal age budget must be 100..10000 ms')
+        from .execution_runtime import LatencyRecorder
+        self.telemetry = LatencyRecorder()
+        self.last_telemetry_sync = 0.
         self.recover_exits()
 
     def exits(self):
@@ -66,9 +76,11 @@ class PaperExecution:
                 first = min(previous,key=lambda o:o['submitted_ns'])
                 self.request_exit(symbol,first.get('reason','recovered_exit'))
 
-    def retry_exits(self,now):
+    def retry_exits(self,now,service=False):
         positions = self.engine.store.get('positions',{})
         for symbol,intent in self.exits().items():
+            if service:
+                now = time.time_ns()
             p = positions.get(symbol)
             if not p or intent['position_id']!=[p['opened_at'],1 if p['amount']>0 else -1]:
                 with self.engine.store.connect() as c:
@@ -78,6 +90,8 @@ class PaperExecution:
                 continue
             try:
                 raw = self.bus.get('book:'+symbol)
+                if service:
+                    now = time.time_ns()
                 if not raw or not 0<=now//1000000-raw['updated_ms']<=2000:
                     continue
                 book = DepthBook()
@@ -95,13 +109,22 @@ class PaperExecution:
                                'exit:'+str(intent['requested_ns'])+':'+str(intent['attempts']),p)
             intent['order_id'] = oid
             self.engine.store.set('paper_exit:'+symbol,intent)
+            if service:
+                self.service_pending()
 
     def sync_reflection(self):
+        if not getattr(self.engine.cfg,'reflection_enabled',False):
+            self.reflection_synced = True
+            return
+        now = time.monotonic()
+        if self.reflection_synced and now-self.last_reflection_sync < 60:
+            return
         from .paper_performance import paper_performance
         result = paper_performance(self.engine.store, include_trades=True)
         if result is not None:
             self.engine.reflection.sync_completed(result['completed_positions'])
         self.reflection_synced = True
+        self.last_reflection_sync = now
         # An interrupted paper intent is known virtual state; recover it through
         # fresh depth rather than submit a second exchange or simulated order.
 
@@ -118,7 +141,19 @@ class PaperExecution:
             self.request_exit(symbol,reason)
             self.retry_exits(time.time_ns())
             return (self.exit_intent(symbol) or {}).get('order_id')
-        return self._submit(symbol,amount,price,reason,key,existing)
+        if self.priority_execution:
+            context = e.store.get('entry_context:'+symbol,{})
+            stamp = context.get('feature_ts')
+            age = time.time()*1000-stamp if isinstance(stamp,(int,float)) else float('inf')
+            if not math.isfinite(age) or not 0 <= age <= self.signal_max_age_ms:
+                e.store.set('sizing:'+symbol,{'status':'blocked','reason':'Signal age exceeds execution budget',
+                            'signal_age_ms':age if math.isfinite(age) else None,'at':utc(time.time_ns())})
+                return
+            self.telemetry.observe('signal_age_at_intent',age)
+        oid = self._submit(symbol,amount,price,reason,key,existing)
+        if self.priority_execution:
+            self.service_pending()
+        return oid
 
     def _submit(self,symbol,amount,price,reason,key,existing):
         e = self.engine
@@ -128,11 +163,39 @@ class PaperExecution:
         oid = e.order_id(symbol,reason,key)
         at = time.time_ns()
         context = e.store.get('entry_context:'+symbol,{})
-        e.store.intent(oid,symbol,{'amount':amount,'price':price,'reason':reason,'execution':'paper_depth_ioc'})
-        self.broker.submit(oid,symbol,1 if amount>0 else -1,abs(amount),at,reduce_only=closing,
-                           metadata={'paper_context':context,'reason':reason,'closing':closing},
-                           max_quote=None if closing else context.get('entry_profile',{}).get('notional'))
+        with self.telemetry.measure('durable_submit'):
+            e.store.intent(oid,symbol,{'amount':amount,'price':price,'reason':reason,'execution':'paper_depth_ioc'})
+            self.broker.submit(oid,symbol,1 if amount>0 else -1,abs(amount),at,reduce_only=closing,
+                               metadata={'paper_context':context,'reason':reason,'closing':closing},
+                               max_quote=None if closing else context.get('entry_profile',{}).get('notional'))
         return oid
+
+    def service_pending(self, max_wait_ms=100):
+        """Service due acknowledgements before scanning another symbol.
+
+        Never invent elapsed time, extend IOC expiry or reuse stale depth. If
+        the host is already late, the existing broker expires the order.
+        """
+        deadline = time.monotonic()+max_wait_ms/1000
+        while True:
+            orders = self.journal.orders(active=True)
+            if not orders:
+                return
+            now = time.time_ns()
+            due = min(o.get('ack_due_ns',now) for o in orders)
+            wait = max(0,(due-now)/1e9)
+            remaining = deadline-time.monotonic()
+            if wait > remaining:
+                return
+            if wait:
+                time.sleep(wait)
+            self.match_pending()
+            if time.monotonic() >= deadline:
+                return
+            # No busy polling on UNKNOWN/unresolved states.
+            after = self.journal.orders(active=True)
+            if after and all(o.get('ack_ns') is not None or o['state']=='UNKNOWN' for o in after):
+                return
 
     def apply_fill(self,c,fill,order):
         e = self.engine
@@ -151,10 +214,15 @@ class PaperExecution:
             if not old or old['amount']*amount>=0 or qty>abs(old['amount'])+1e-10:
                 raise ValueError('Paper reduce-only fill cannot open or reverse a position')
             pnl = (price-old['entry'])*(-amount)
+            funding = 0.
+            if old.get('quant_version'):
+                from .quant_strategy import funding_charge
+                funding = funding_charge(qty,old['entry'],old['exit_plan'],
+                                         old['quant_opened_ms'],fill['at_ns']//1000000)
             if order.get('reason')=='paper_liquidation':
                 allocated_margin = old['initial_margin']*qty/abs(old['amount'])
                 pnl = max(pnl-fee,-allocated_margin)+fee
-            wallet += pnl-fee
+            wallet += pnl-fee-funding
             remaining = old['amount']+amount
             if abs(remaining)<max(1e-10,abs(old['amount'])*1e-10):
                 del positions[order['symbol']]
@@ -166,9 +234,27 @@ class PaperExecution:
             closed = get('execution_closed_fills',[])
             closed.append({'at':utc(fill['at_ns']),'symbol':order['symbol'],
                            'fill_id':fill['id'],'entry_fee':old.get('entry_fee',0)*qty/abs(old['amount']),
-                           'quantity':qty,'gross_pnl':pnl,'fee':fee,'reason':order.get('reason'),
+                           'quantity':qty,'gross_pnl':pnl,'fee':fee,'funding_cost':funding,'reason':order.get('reason'),
                            'model_version':old.get('model_version')})
             put('execution_closed_fills',closed[-1000:])
+            if old.get('quant_version'):
+                from .quant_strategy import COOLDOWN_MS
+                stats = get('quant_performance', {'completed':0,'wins':0,'net':0.,'fees':0.,'gross':0.})
+                entry_fee = old.get('entry_fee',0)*qty/abs(old['amount'])
+                net = pnl-entry_fee-fee-funding
+                cycle = old.get('quant_cycle_net',0.)+net
+                stats['net'] += net
+                stats['gross'] += pnl
+                stats['fees'] += entry_fee+fee
+                stats['funding_cost'] = stats.get('funding_cost',0.)+funding
+                if order['symbol'] in positions:
+                    positions[order['symbol']]['quant_cycle_net'] = cycle
+                else:
+                    stats['completed'] += 1
+                    stats['wins'] += int(cycle>0)
+                    put('quant_cooldown:'+order['symbol'],fill['at_ns']/1e6+COOLDOWN_MS)
+                stats['updated_at'] = utc(fill['at_ns'])
+                put('quant_performance',stats)
             if old.get('shortline_version'):
                 from .shortline import STATS_KEY, VERSION
                 if old['shortline_version'] == VERSION:
@@ -206,6 +292,9 @@ class PaperExecution:
                         'entry_regime':context.get('regime','microstructure'),'mae_pct':0,'mfe_pct':0}
             if not old and context.get('shortline_version'):
                 p['shortline_version'] = context['shortline_version']
+            if not old and context.get('quant_version'):
+                p.update(quant_version=context['quant_version'],quant_strategy=context['quant_strategy'],
+                         experiment_id=context['experiment_id'],quant_opened_ms=fill['at_ns']//1000000)
             if not old and context.get('ds_authority'):
                 p['ds_authority'] = True
             if context.get('ai_parameters') and not old:
@@ -264,7 +353,19 @@ class PaperExecution:
         if not self.reflection_synced:
             self.sync_reflection()
         now = time.time_ns()
-        self.retry_exits(now)
+        if self.priority_execution:
+            self.retry_exits(now,service=True)
+        else:
+            self.retry_exits(now)
+        self.match_pending()
+        if time.monotonic()-self.last_telemetry_sync >= 10 and not self.journal.orders(active=True):
+            self.engine.store.set('execution_runtime',self.telemetry.report() | {
+                'at':utc(time.time_ns()),'priority_execution':self.priority_execution,
+                'signal_max_age_ms':self.signal_max_age_ms,'exchange_level_hft':False})
+            self.last_telemetry_sync = time.monotonic()
+
+    def match_pending(self):
+        now = time.time_ns()
         orders = self.journal.orders(active=True)
         if not orders:
             return
@@ -272,18 +373,26 @@ class PaperExecution:
         for symbol in {o['symbol'] for o in orders}:
             try:
                 raw = self.bus.get('book:'+symbol)
-                if raw and 0<=now//1000000-raw['updated_ms']<=2000:
+                observed_now = time.time_ns()
+                if raw and 0<=observed_now//1000000-raw['updated_ms']<=2000:
+                    self.telemetry.observe('book_age_at_match',observed_now/1e6-raw['updated_ms'])
                     book = DepthBook()
                     book.seed(raw,raw['updated_ms'])
                     book.ready = bool(book.bids and book.asks and max(book.bids)<min(book.asks))
                     books[symbol] = book
             except Exception:
                 pass
-        self.broker.on_event(now,books)
+        # Reads and new submissions may advance the wall clock. Never match a
+        # newly submitted intent against a timestamp captured before submission.
+        with self.telemetry.measure('matching_and_ledger'):
+            self.broker.on_event(time.time_ns(),books)
         for previous in orders:
             order = self.journal.get(previous['id'])
             if order['state'] in TERMINAL:
                 self.engine.store.order_result(order['id'],order['state'],{
                     'executedQty':order['filled'],'quoteQty':order['notional'],'execution':'paper_depth_ioc'})
-        self.engine.store.set('execution_statistics',self.journal.statistics())
-        self.sync_reflection()
+        if not self.journal.orders(active=True):
+            if any(self.journal.get(o['id'])['state']=='FILLED' for o in orders) or time.monotonic()-self.last_statistics_sync >= 30:
+                self.engine.store.set('execution_statistics',self.journal.statistics(limit=200))
+                self.last_statistics_sync = time.monotonic()
+            self.sync_reflection()

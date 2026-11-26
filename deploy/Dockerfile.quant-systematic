@@ -1,0 +1,4 @@
+FROM ai-trader-quant:paper-mover-scan-20261117-r3
+COPY service/server/quant/ /app/service/server/quant/
+COPY service/server/routes_quant.py /app/service/server/routes_quant.py
+COPY service/server/tests/test_systematic_quant.py /app/service/server/tests/test_systematic_quant.py

@@ -1,0 +1,8 @@
+FROM ai-trader-quant:hybrid-compute-20261126
+USER root
+COPY patch_second_grid.py /tmp/patch_second_grid.py
+RUN python /tmp/patch_second_grid.py /app/service/server/quant/quant_strategy.py && \
+    python -m py_compile /app/service/server/quant/quant_strategy.py /app/service/server/quant/quant_runtime.py && \
+    python -c "from quant.quant_strategy import VERSION,GRID_MS,HORIZON_MS,COOLDOWN_MS; assert (VERSION,GRID_MS,HORIZON_MS,COOLDOWN_MS)==('systematic-flow-second-v1',1000,600000,120000); from quant.compute_bridge import strategy_bundle; print(strategy_bundle()['code_id'])"
+USER trader
+WORKDIR /app/service/server

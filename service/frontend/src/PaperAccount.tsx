@@ -37,6 +37,8 @@ export function PaperAccount() {
     {error && <p role="alert">{error}</p>}
     {!data ? <p>正在读取模拟账户…</p> : <>
       <p>状态：{data.stale ? '进程心跳过期' : names[data.worker.status] || data.worker.status} · 最后心跳 {beijingTime(data.worker.heartbeat)}（UTC+8）</p>
+      {data.hybrid_compute?.enabled && <p>策略计算：{data.hybrid_compute.decision_source === 'local' ? '本地电脑' : '服务器兜底'} · 本地结果采用 {fmt(data.hybrid_compute.counters?.local_hits || 0, 0)} 次 · 服务器计算 {fmt(data.hybrid_compute.counters?.server_fallbacks || 0, 0)} 次。服务器始终管理原模拟账本和执行，迟到或断线立即改用服务器计算；不代表已通过低延迟或盈利验收。</p>}
+      {data.hybrid_compute?.enabled && <p>本地计算通道：{data.hybrid_compute.local_path?.connected ? '已连接' : '未连接'} · 往返 P95 {fmt(data.hybrid_compute.local_path?.admission?.p95_ms)} ms · 当前连接样本 {fmt(data.hybrid_compute.local_path?.admission?.samples, 0)} · 延迟准入：{data.hybrid_compute.local_path?.admission?.eligible ? '达标' : '未达标，服务器继续计算'}。准入要求至少 20 个样本且 P95 ≤ 100 ms。</p>}
       {Object.entries(data.pending_exits || {}).map(([symbol, raw]) => { const exit = raw as any; return <p role="status" key={symbol}><strong>{symbol} 持续平仓中</strong> · 原因 {exit.reason} · 已尝试 {exit.attempts} 次。盘口恢复后按剩余仓位继续减仓，订单过期不会撤销退出。</p> })}
       <div className="paper-performance-grid" aria-label="模拟盘收益摘要">
         <div className="paper-performance-card paper-performance-balance"><span>总余额</span><strong>{fmt(data.performance?.total_balance ?? data.account.equity)} USDT</strong><small>权益，包含当前浮动盈亏</small></div>
@@ -61,18 +63,50 @@ export function PaperAccount() {
         <p>{data.config.paper_ds_authority ? 'DS 决定选币、方向和开平仓，程序仅校验指令时效、资金、风险与盘口成交条件；不再用方向评分、趋势、订单流、双样本或冷却期否决。止盈止损按 DS 参数执行，允许 DS 主动更新保护。' : 'AI 提供最长 5 分钟有效的交易计划，程序等待两个独立盘口特征样本确认方向、订单流和成本；平仓后同币冷却 120 秒。成交频率由有效信号决定。'}</p>
         <p>本策略已实现净盈亏 <strong>{signedFmt(data.shortline?.performance?.net ?? 0)} USDT</strong> · 已平仓 {fmt(data.shortline?.performance?.completed ?? 0, 0)} 笔 · 盈利 {fmt(data.shortline?.performance?.wins ?? 0, 0)} 笔 · 手续费 {fmt(data.shortline?.performance?.fees ?? 0)} USDT</p>
         <p>复投参考资金 {fmt(data.shortline?.budget?.base_capital)} USDT · 当前规模系数 {fmt(data.shortline?.budget?.multiplier, 4)} · 单笔风险预算 {fmt(data.shortline?.budget?.per_trade_risk_usdt)} USDT · 组合风险预算 {fmt(data.shortline?.budget?.portfolio_risk_usdt)} USDT</p>
-        <small>只按本策略已实现净盈亏调整规模，充值和历史策略不计入复投；浮亏会缩小预算。原保证金上限继续生效。这不是毫秒级高频策略，尚无稳定盈利证据；模拟账本目前未计资金费，保本触发价也不能保证跳价后保本。</small>
+        <small>只按本策略已实现净盈亏调整规模，充值和历史策略不计入复投；浮亏会缩小预算。{data.config.paper_unrestricted_positions ? '模拟盘不设固定组合和同向仓位上限，单笔保证金、可用余额与实际盘口成交仍有效。' : '原组合保证金上限继续生效。'}这不是毫秒级高频策略，尚无稳定盈利证据；模拟账本目前未计资金费，保本触发价也不能保证跳价后保本。</small>
+      </div>}
+      {data.config.paper_quant_system && <div style={{ border: '1px solid var(--border-color)', borderRadius: 8, padding: 16, marginBottom: 16 }}>
+        <h3>系统化策略研究 · {data.quant_system?.selected || '尚无通过验证的策略'}</h3>
+        <p>状态：{data.quant_system?.ready ? '样本外门槛通过，仅启用模拟盘' : data.quant_system?.reason || '等待历史数据评估'} · 研究版本 {data.quant_system?.version || 'systematic-flow-v1'} · 决策间隔 {fmt((data.quant_system?.grid_ms || 5000) / 1000, 0)} 秒 · 实盘交易关闭。</p>
+        <p>验证集净收益（已含成本）：{Object.entries(data.quant_system?.validation || {}).map(([name, row]: [string, any]) => `${name} ${fmt(row.net_pnl)} U / ${fmt(row.trades, 0)} 笔`).join(' · ') || '等待报告'}</p>
+        <p>样本外：{(data.quant_system?.folds || []).map((fold: any, i: number) => `区间 ${i + 1} ${fmt(fold.test?.net_pnl)} U，压力测试 ${fmt(fold.stress?.net_pnl)} U`).join(' · ') || '暂无通过门槛的候选策略'} · 样本外成交 {fmt(data.quant_system?.oos?.trades, 0)} 笔</p>
+        <p>置信下界 {fmt(data.quant_system?.confidence?.lower_mean_usdt)} U / 3 小时区块 · 特征覆盖 {fmt(data.quant_system?.coverage?.feature_hours, 0)} 小时 · 每笔预算 {fmt(data.quant_system?.risk_per_trade_usdt)} U</p>
+        <p>模拟已实现净盈亏 {fmt(data.quant_performance?.net)} U · 已平仓 {fmt(data.quant_performance?.completed, 0)} 笔 · 盈利 {fmt(data.quant_performance?.wins, 0)} 笔 · 费用 {fmt(data.quant_performance?.fees)} U</p>
+        <small>固定规则比较：订单流动量、回踩延续和流量反转。策略只由验证集选定，后续时间段及双倍费用压力测试用于样本外检验；全部费用按模拟执行假设估算。历史结果不保证未来收益。</small>
+        {data.quant_system?.qualification?.reasons?.length > 0 && <p>当前拒绝原因：{data.quant_system.qualification.reasons.join('；')}</p>}
+        <details><summary>最近方向信号与特征证据</summary>{(data.quant_decisions || []).slice(0, 12).map((decision: any) => <p key={`${decision.symbol}-${decision.feature_ts}`}>{decision.symbol} · {actions[decision.action] || '观望'} · {decision.reason} · {beijingTime(decision.at)}</p>)}</details>
       </div>}
       <p>行情通道：{data.worker.market_stream?.status === 'connected' ? 'WebSocket 实时行情已收到' : data.worker.market_stream?.status === 'no_market_events' ? 'WebSocket 暂无行情帧，使用 REST 回退并重试' : data.worker.market_stream?.status === 'reconnecting' ? `WebSocket 重连中（${data.worker.market_stream.reconnects || 0} 次），使用 REST 回退` : '等待 WebSocket · REST 回退可用'} · 新鲜标记价 {data.worker.market_stream?.fresh_marks || 0}/{data.config.symbols.length}</p>
       {data.worker.error && <p role="alert" style={{ color: '#edac65' }}>{data.worker.error}</p>}
-      <p><strong>新仓模拟杠杆：{data.config.paper_dynamic_leverage ? `${data.config.paper_min_leverage}–${data.config.paper_max_leverage} 倍动态计算（BTC/ETH 上限 ${data.config.paper_major_max_leverage} 倍）` : formatLeverage(data.config.leverage)}</strong> · 当前虚拟钱包 {fmt(data.account.wallet)} USDT · 新仓每仓保证金{data.config.paper_margin_is_ceiling || data.config.paper_exploration_mode ? '上限' : ''} {fmt(data.config.paper_margin || data.config.order_notional / data.config.leverage)} USDT · 总保证金上限 {fmt(data.config.paper_max_margin || data.config.max_notional / data.config.leverage)} USDT · 最多 {data.config.max_positions} 个仓位</p>
+      <p><strong>新仓模拟杠杆：{data.config.paper_dynamic_leverage ? `${data.config.paper_min_leverage}–${data.config.paper_max_leverage} 倍动态计算（BTC/ETH 上限 ${data.config.paper_major_max_leverage} 倍）` : formatLeverage(data.config.leverage)}</strong> · 当前虚拟钱包 {fmt(data.account.wallet)} USDT · 新仓每仓保证金{data.config.paper_margin_is_ceiling || data.config.paper_exploration_mode ? '上限' : ''} {fmt(data.config.paper_margin || data.config.order_notional / data.config.leverage)} USDT · {data.config.paper_unrestricted_positions ? '模拟盘多仓：无固定组合/同向上限' : `总保证金上限 ${fmt(data.config.paper_max_margin || data.config.max_notional / data.config.leverage)} USDT · 最多 ${data.config.max_positions} 个仓位`}</p>
       {data.config.paper_margin_is_ceiling && <p>实际保证金根据实时盘口和组合风险向下调整，持仓卡片显示实际占用。缩小订单不豁免成本检查和模型验证。</p>}
       {data.config.paper_dynamic_leverage && <p>杠杆由波动止损距离、往返成本、盘口容量和剩余组合风险计算；单仓风险预算为保证金的 {fmt(data.config.paper_risk_fraction * 100)}%，无法支持最低杠杆时跳过。达到最高倍数不是目标。</p>}
       {data.config.paper_lab_required && <p><strong>{data.config.paper_ai_autopilot ? 'DS 行情门槛' : '模型开仓门槛'}：{data.config.paper_ai_autopilot ? data.lab_gate?.ready ? '实时数据可用' : '等待数据就绪' : data.lab_gate?.exploration ? '探索模拟 · 尚未通过验证' : data.lab_gate?.ready ? '验证通过' : '未就绪'}</strong> · {data.lab_gate?.reason || '等待采集与模型验证'}；已有仓位保护独立执行。</p>}
       {data.config.paper_exploration_mode && <p>探索模拟按实际盘口容量缩小订单，每仓保证金以配置金额为上限；虚拟成交用于收集前向测试结果，不表示模型已通过盈利验证。</p>}
       {data.config.paper_lab_required && <p>模拟订单采用盘口分档 IOC 成交，未成交余额过期，剩余持仓继续管理。累计订单 {fmt(data.execution_statistics?.orders, 0)} · 首次成交 P50 {fmt(data.execution_statistics?.first_fill?.p50_ms)} / P95 {fmt(data.execution_statistics?.first_fill?.p95_ms)} 毫秒。这里测量模拟处理链路，不代表币安真实下单延迟。</p>}
+      {data.config.paper_lab_required && <details className="paper-history">
+        <summary>模拟执行诊断（非交易所延迟）</summary>
+        {(() => {
+          const runtime = data.execution_runtime || {}
+          const stages = runtime.stages || {}
+          const stageNames: Record<string, string> = {
+            engine_scan: '策略扫描', redis_scan_snapshot: 'Redis 快照读取',
+            durable_submit: '模拟订单持久化', book_age_at_match: '撮合时盘口年龄',
+            matching_and_ledger: '模拟撮合与账本', signal_age_at_intent: '信号生成至下单意图',
+          }
+          return <>
+            <p>诊断更新时间：{beijingTime(runtime.at)} · 交易所订单确认：未测量 · Worker：{data.worker?.status || '未知'}</p>
+            <p>最近 {fmt(data.execution_statistics?.sampled_orders, 0)} 笔订单中零成交/过期 {fmt(data.execution_statistics?.zero_fill_orders, 0)} 笔（{fmt(data.execution_statistics?.zero_fill_ratio == null ? null : data.execution_statistics.zero_fill_ratio * 100, 1)}%）；该比例反映模拟撮合成交质量。</p>
+            {Object.entries(stageNames).map(([key, label]) => {
+              const stage = stages[key]
+              return <p key={key}>{label}：P50 {fmt(stage?.p50_ms)} / P95 {fmt(stage?.p95_ms)} / P99 {fmt(stage?.p99_ms)} ms · 样本 {fmt(stage?.window_samples, 0)}（累计观测 {fmt(stage?.observations, 0)}）</p>
+            })}
+            <small>这些数据来自本机单调时钟和模拟撮合。Binance 私有下单/撤单 WebSocket、网关 RTT、交易所确认时间及排队位置均未接入或测量，因此当前不能称为交易所级毫秒高频。</small>
+          </>
+        })()}
+      </details>}
       <p>{data.config.symbols.join('、')} · {data.config.interval} K 线 · 均线 {data.config.fast}/{data.config.slow} · {data.config.paper_dynamic_exits ? '新仓使用 ATR14 动态目标与移动止损，止损只收紧，不放宽' : `模拟止损 ${data.config.stop_pct * 100}% / 止盈 ${data.config.take_pct * 100}%`} · 模拟盘不设每日亏损上限</p>
-      <p>{data.config.paper_ai_autopilot ? 'DS 判断方向和仓位参数 · 行情事件唤醒保护检查' : data.config.strategy === 'lab_model' ? '数值模型判断方向 · 行情事件唤醒退出检查' : data.config.strategy === 'adaptive' ? '趋势：均线交叉跟随 · 震荡：布林带区间回归' : data.config.strategy} · {data.config.paper_dynamic_leverage ? '新仓动态杠杆' : `新仓 ${data.config.leverage} 倍杠杆`}。旧仓保留开仓时的保证金与风控参数。</p>
+      <p>{data.config.paper_quant_system ? '固定规则量化策略 · 只有当前时间戳被选定的策略信号能申请模拟开仓' : data.config.paper_ai_autopilot ? 'DS 判断方向和仓位参数 · 行情事件唤醒保护检查' : data.config.strategy === 'lab_model' ? '数值模型判断方向 · 行情事件唤醒退出检查' : data.config.strategy === 'adaptive' ? '趋势：均线交叉跟随 · 震荡：布林带区间回归' : data.config.strategy} · {data.config.paper_dynamic_leverage ? '新仓动态杠杆' : `新仓 ${data.config.leverage} 倍杠杆`}。旧仓保留开仓时的保证金与风控参数。</p>
       <p>AI 模式：{data.config.paper_ai_autopilot ? 'DeepSeek 自主决策' : data.config.ai_enabled ? '开仓审核' : '自动调用关闭'} · {data.config.paper_ds_authority ? '置信度仅供参考，不作为程序否决条件' : `置信度阈值 ${fmt(data.config.ai_min_confidence * 100)}%`} · 资金、风险上限和成交由模拟执行器约束。</p>
       <p><strong>策略反思：{data.reflection?.enabled ? `版本 ${data.reflection.active?.version || 1}，已完成 ${data.reflection.report?.window_trades || 0} 笔归因` : '未启用'}</strong> · 最近窗口净盈亏 {fmt(data.reflection?.report?.net_pnl)} USDT · 成本/逐笔毛盈亏绝对值之和 {fmt((data.reflection?.report?.cost_ratio || 0) * 100)}% · {data.reflection?.active?.reason || '等待足够样本'}</p>
       <p>虚拟权益 {fmt(data.account.equity)} USDT · 虚拟可用 {fmt(data.account.available)} USDT · <strong>当前持仓保证金合计 {fmt(totalMargin)} USDT</strong> · {data.daily_loss_blocked ? '每日亏损限制已触发，停止开新仓' : data.config.paper_ai_autopilot ? '按 DS 决策执行，受资金与成交条件约束' : data.config.strategy === 'lab_model' ? '等待有效模型信号与风险检查' : '等待策略信号，通过 AI 审核后才模拟成交'}</p>

@@ -186,31 +186,45 @@ class LabStore:
         paths are visible to the replay. This remains sampled-quote research.
         """
         with self.connect() as c:
-            # A simultaneous feature wins; otherwise a quote remains visible
-            # even during warmup or after leaving the candidate pool.
-            cursor = c.execute('''SELECT symbol,ts,price,vector,meta FROM samples
-                WHERE ts>=? AND ts<?
-                UNION ALL
-                SELECT q.symbol,q.ts,q.price,NULL,q.meta FROM execution_quotes q
+            # Keep each range scan on its existing timestamp index. UNION plus
+            # ORDER BY forced SQLite to build a large temporary sort on disk.
+            samples = iter(c.execute('''SELECT symbol,ts,price,vector,meta FROM samples
+                WHERE ts>=? AND ts<? ORDER BY ts''', (start_ms, end_ms)))
+            quotes = iter(c.execute('''SELECT q.symbol,q.ts,q.price,NULL,q.meta FROM execution_quotes q
                 WHERE q.ts>=? AND q.ts<? AND NOT EXISTS (
                     SELECT 1 FROM samples s WHERE s.symbol=q.symbol AND s.ts=q.ts)
-                ORDER BY ts,symbol''',(start_ms,end_ms,start_ms,end_ms))
+                ORDER BY q.ts''', (start_ms, end_ms)))
+            sample = next(samples, None)
+            quote = next(quotes, None)
             last = {}
-            for symbol,ts,price,vector,meta in cursor:
-                if ts//stride_ms == last.get(symbol):
-                    continue
-                meta = json.loads(meta)
-                from .lab_features import SCHEMA
-                if vector is not None and (meta.get('schema') != SCHEMA or not meta.get('quality')):
-                    continue
-                if vector is None and not meta.get('quote_quality'):
-                    continue
-                last[symbol] = ts//stride_ms
-                meta = {k:meta[k] for k in ('quality','schema','bid','ask','bid_depth','ask_depth',
-                            'spread_bps','atr_proxy','funding_rate','filters','entry_allowed',
-                            'quote_quality','candidate') if k in meta}
-                yield {'symbol':symbol,'ts':ts,'price':price,
-                       'vector':json.loads(vector) if vector is not None else [],'meta':meta}
+
+            def emit(group):
+                for symbol,ts,price,vector,raw_meta in sorted(group,key=lambda r:r[0]):
+                    if ts//stride_ms == last.get(symbol):
+                        continue
+                    meta = json.loads(raw_meta)
+                    from .lab_features import SCHEMA
+                    if vector is not None and (meta.get('schema') != SCHEMA or not meta.get('quality')):
+                        continue
+                    if vector is None and not meta.get('quote_quality'):
+                        continue
+                    last[symbol] = ts//stride_ms
+                    meta = {k:meta[k] for k in ('quality','schema','bid','ask','bid_depth','ask_depth',
+                                'spread_bps','atr_proxy','funding_rate','filters','entry_allowed',
+                                'quote_quality','candidate') if k in meta}
+                    yield {'symbol':symbol,'ts':ts,'price':price,
+                           'vector':json.loads(vector) if vector is not None else [],'meta':meta}
+
+            while sample is not None or quote is not None:
+                ts = min(r[1] for r in (sample, quote) if r is not None)
+                group = []
+                while sample is not None and sample[1] == ts:
+                    group.append(sample)
+                    sample = next(samples, None)
+                while quote is not None and quote[1] == ts:
+                    group.append(quote)
+                    quote = next(quotes, None)
+                yield from emit(group)
 
     def prune(self, days):
         with self.connect() as c:

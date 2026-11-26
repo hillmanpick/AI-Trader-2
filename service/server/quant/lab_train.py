@@ -145,15 +145,21 @@ def passes(report):
             and (report['profit_factor'] or 0) >= 1.1 and report['max_drawdown'] <= 3000)
 
 
-def train(cfg, gradient=False):
+def train(cfg, gradient=False, output_directory=None):
     store = LabStore(cfg.directory)
+    # Hybrid workers read an immutable snapshot (or the server source), but
+    # publish only into a fenced candidate directory. Never overwrite the
+    # active server model before the coordinator accepts this worker's lease.
+    output = Path(output_directory or cfg.directory)
+    output.mkdir(parents=True, exist_ok=True)
+    report_store = LabStore(output) if output_directory else store
     stats = store.stats()
     clean = stats.get('clean_training', {})
     if stats['samples'] < cfg.min_samples or stats['days'] < cfg.min_days:
         report = {'status':'insufficient_data','samples':stats['samples'],'days':stats['days'],
                   'clean_samples':clean.get('samples',0),'clean_days':clean.get('days',0),
                   'required_samples':cfg.min_samples,'required_days':cfg.min_days,'at_ms':int(time.time()*1000)}
-        store.report(report)
+        report_store.report(report)
         return report
     # Sampled-price labels remain a diagnostic helper, never training truth.
     # Online labels survive raw-file retention and include full-horizon ID checks.
@@ -163,7 +169,7 @@ def train(cfg, gradient=False):
             or coverage_days < cfg.min_days*.75):
         report = {'status':'insufficient_clean_labels','samples':len(rows),'coverage_days':coverage_days,
                   'at_ms':int(time.time()*1000)}
-        store.report(report)
+        report_store.report(report)
         return report
     start,end = rows[0]['ts'],rows[-1]['label_end']+1
     test_start = end-cfg.event_validation_seconds*1000
@@ -172,7 +178,7 @@ def train(cfg, gradient=False):
     if len(research)<1000 or validation_start-start < cfg.horizon_seconds*10000:
         report = {'status':'insufficient_event_holdout','at_ms':int(time.time()*1000),
                   'samples':len(rows),'required_window_seconds':cfg.event_validation_seconds}
-        store.report(report)
+        report_store.report(report)
         return report
     # All exploratory folds end before the final untouched event holdouts.
     end_research = validation_start
@@ -243,13 +249,13 @@ def train(cfg, gradient=False):
             'promotion':'research only; must repeat net-of-cost OOS replay before execution'}
     final_model |= {'approved':approved,'trained_ms':report['at_ms'],'execution_validation':proof,
                     'test':proof.get('test',{})}
-    destination = Path(cfg.directory)/'model.json'
+    destination = output/'model.json'
     temp = destination.with_suffix('.tmp')
     temp.write_text(json.dumps(final_model,allow_nan=False),encoding='utf-8')
     os.replace(temp,destination)
     report['model_version'] = final_model['version']
-    store.report(report)
-    (Path(cfg.directory)/'latest-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+    report_store.report(report)
+    (output/'latest-report.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
     return report
 
 
@@ -258,13 +264,18 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--gradient',action='store_true')
     parser.add_argument('--watch',action='store_true')
+    parser.add_argument('--output-directory', help='Isolated candidate output; does not publish the active model')
     args = parser.parse_args()
     cfg = LabConfig().validate()
     interval = training_interval_seconds()
     while True:
         try:
             if not args.watch or cfg.auto_train:
-                print(json.dumps(train(cfg,args.gradient),ensure_ascii=False),flush=True)
+                report = train(cfg,args.gradient,args.output_directory)
+                if args.output_directory:
+                    (Path(args.output_directory)/'latest-report.json').write_text(
+                        json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+                print(json.dumps(report,ensure_ascii=False),flush=True)
         except Exception as exc:
             print(json.dumps({'status':'training_error','error':type(exc).__name__}),flush=True)
         if not args.watch:
